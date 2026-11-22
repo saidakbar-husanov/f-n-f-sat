@@ -1,0 +1,1 @@
+ALTER TABLE "vocab_words" ADD COLUMN "uzbek_translation" text DEFAULT '' NOT NULL;

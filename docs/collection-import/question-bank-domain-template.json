@@ -1,0 +1,114 @@
+{
+  "formatVersion": "1.0",
+  "destination": {
+    "type": "questionBankDomain",
+    "section": "math",
+    "domain": "Algebra"
+  },
+  "assets": [
+    {
+      "id": "graph_choice_a",
+      "fileName": "graph_choice_a.png",
+      "mimeType": "image/png",
+      "alt": "Line through the origin rising to the right with slope 1.",
+      "data": "iVBORw0KGgoAAAANSUhEUgAAAIwAAACMCAIAAAAhotZpAAAB8UlEQVR42u3csRGCUBAAUcohsyT7s0kMzDQwZe/eDgUAbz58CO64dPsOtwCSIEESJEGCJEiCdLMez9fnWIR0nmdRCFJACFJYCFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJAaDtSQmg1UkVoL1JIaClSS2gjUk5oHVJRaBdSVGgRUldoC1JaaAVSXWg+0gCh4UgzhCYjjREaizRJaCbSMKGBSPOE/iOdqb6EWie/YiWNXEOjkAYLDUH6fcpBuvsaghR4ykEKvIcgBXYKkAJ7OUiB3TakwPcQpMAXK6TAPwVIdxeCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCC1JiiuRqpMud0L1JoEu1SpNas4I1IuWnO65CK87Z3IUUnou9FCl3SUqRLrT8OgiRIkAQJkiAJ0vDe+kNZJg7XTOsAAAAASUVORK5CYII="
+    },
+    {
+      "id": "graph_choice_b",
+      "fileName": "graph_choice_b.png",
+      "mimeType": "image/png",
+      "alt": "Line through the origin falling to the right with slope -1.",
+      "data": "iVBORw0KGgoAAAANSUhEUgAAAIwAAACMCAIAAAAhotZpAAAB40lEQVR42u3dsRECMQwAQcr5jJLojyYhIPyECP6kvXEF3pECJ769dPlurgCSIEESJEGCJEj6Gun+eH6OawogtZyO41iKFHLahRR1WodUdNqIlHNaitRy2osUclqNVHHajpRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwgpR/j4DE6R9IR6rz3gu1YpIGz9PA/5PmOQ1EOu89SFdEGjZPY5EmOU1GGuM0HGmG03ykAU4rkOpOW5DSTouQuk67kKJO65CKThuRck5LkVpOe5FCTquRKk7bkRJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkC7ktAgpF6QJQYIkSJAESZAg6ae9AfpDWSYQoUKTAAAAAElFTkSuQmCC"
+    },
+    {
+      "id": "graph_choice_c",
+      "fileName": "graph_choice_c.png",
+      "mimeType": "image/png",
+      "alt": "Horizontal line crossing the y-axis above the origin.",
+      "data": "iVBORw0KGgoAAAANSUhEUgAAAIwAAACMCAIAAAAhotZpAAABKklEQVR42u3WwREAEAwAQeXkpyT9aZK3BhLD3qQCO0hbur7mCCAJEiRBEiRIgiRIkMqLCEiQIEGCBAkSJEiQIEGCBAkSJEiQIEGCBAkSJEiQIEGCBAkSJEiQIEGCBAkSJEiQIEGCBAkSJEiQIEGCBAkSJEiQIEGCBOkrpD6myRxIkEwVkj/J4gAJEiRIkCBBggQJEiRIkCBBggQJEiRIkCBBggQJEqQEpFBWbpLnDhIkSJAgQYIECRIkSJAgQYIECRIkSJAgQYIECRIkSJAgQYIECRIkSJAgQYIECRIkSJAgQYIECRIkSJAgQYIECRIkSJAgQYIECRIkSJAgQYIECRIkSJAgQYIECRIkSJAgQYIECRIkSJAgQYIE6U2k94IESZAgCZIgQRIknW0iSvLH9bBr7wAAAABJRU5ErkJggg=="
+    },
+    {
+      "id": "graph_choice_d",
+      "fileName": "graph_choice_d.png",
+      "mimeType": "image/png",
+      "alt": "Steep line rising to the right that crosses the y-axis below the origin.",
+      "data": "iVBORw0KGgoAAAANSUhEUgAAAIwAAACMCAIAAAAhotZpAAABz0lEQVR42u3dwU0EMQyG0S1nbpREfzS5HLggEAIJb/zb+z6lgNE8ZeTMJbe74rt5BZAECZIgCRIkQRKkB/Ty+vaxIP2p67ogQfpRCBIkSKlCkCA9AdIBIUiQtiOdEYIEaTXSMSFIkPYinRSCBGkp0mEhSJA2Ip0XggRpHVKLECRIu5C6hCBBWoTUKAQJ0hakXiFIkFYgtQtBgjQfKUEIEqThSCFCkCBNRsoRggRpLFKUECRIM5HShCBBGogUKAQJ0jSkTCFIkEYhxQpBgjQHKVkIEqQhSOFCkCBNQMoXggQpHmmEECRI2UhThCBBCkYaJAQJUirSLCFIkCKRxglBgpSHNFHod6RrV5+R0p7NThq8jSBBSkKaKwQJUgzSaCFIkDKQpgtBghSAtEAIEqRupB1CkCC1Iq0RggSpD2mTECRITS0TggSJECRIhCBBek6krUKQIDUJHbugHhKkXUhfPnSQIEGqmBcgQYJUMXZDggSp4vQKCRKkfwtBggSpQggSJEgVQpAgQaoQggQJUoUQJEiQKoQgQYJUIQQJEqQKIUiQIFUIQYIEqUIIEiRIFUKQIEGqEIIECVKFECRIkL4h3TXij4MgQRIkSIIkSJB0undnPzUcPC5OoQAAAABJRU5ErkJggg=="
+    }
+  ],
+  "questions": [
+    {
+      "id": "alg-linear-001",
+      "skill": "Linear equations in one variable",
+      "difficulty": "Easy",
+      "questionType": "MCQ",
+      "passageText": null,
+      "questionPrompt": "If $3x + 7 = 22$, what is the value of $x$?",
+      "options": [
+        {
+          "id": "A",
+          "text": "$3$"
+        },
+        {
+          "id": "B",
+          "text": "$5$"
+        },
+        {
+          "id": "C",
+          "text": "$7$"
+        },
+        {
+          "id": "D",
+          "text": "$15$"
+        }
+      ],
+      "correctAnswer": "B",
+      "explanation": "Subtract 7 from both sides to get $3x = 15$, then divide by 3: $x = 5$."
+    },
+    {
+      "id": "alg-linear-002",
+      "skill": "Linear functions",
+      "difficulty": "Medium",
+      "questionType": "SPR",
+      "passageText": "A streaming service charges a one-time setup fee plus a fixed monthly price. The table shows the total cost after several months.\n\n| Months | Total cost (dollars) |\n|---|---|\n| 1 | 23 |\n| 3 | 51 |\n| 6 | 93 |",
+      "questionPrompt": "The total cost is a linear function of the number of months. What is the monthly price, in dollars?",
+      "options": [],
+      "correctAnswer": "14",
+      "acceptableAnswers": [
+        "14.00"
+      ],
+      "explanation": "From 1 month to 3 months the cost rises by $51 - 23 = 28$ dollars over 2 months, so the monthly price is $28 \\div 2 = 14$ dollars."
+    },
+    {
+      "id": "alg-linear-003",
+      "skill": "Linear functions",
+      "difficulty": "Medium",
+      "questionType": "MCQ",
+      "passageText": null,
+      "questionPrompt": "Which graph shows the line $y = -x$?",
+      "options": [
+        {
+          "id": "A",
+          "text": "",
+          "image": "asset:graph_choice_a"
+        },
+        {
+          "id": "B",
+          "text": "",
+          "image": "asset:graph_choice_b"
+        },
+        {
+          "id": "C",
+          "text": "",
+          "image": "asset:graph_choice_c"
+        },
+        {
+          "id": "D",
+          "text": "",
+          "image": "asset:graph_choice_d"
+        }
+      ],
+      "correctAnswer": "B",
+      "explanation": "The line $y = -x$ passes through the origin and has slope $-1$, so it falls from left to right. Only graph B does that."
+    }
+  ]
+}

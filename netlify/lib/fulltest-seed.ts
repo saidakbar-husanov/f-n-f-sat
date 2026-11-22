@@ -1,0 +1,93 @@
+// netlify/lib/fulltest-seed.ts — the pre-loaded sample test. It is also the
+// fixed-form demo test seeded on first visit. The documented import format and
+// its downloadable example live in docs/test-import/.
+export const SEED_FULL_TEST = {
+  testId: "dsat-practice-01",
+  title: "Digital SAT Full-Length Practice Test #1",
+  description: "Official-style multi-module Digital SAT exam.",
+  isAdaptive: false,
+  modules: [
+    {
+      moduleId: "rw_module_1",
+      section: "Reading and Writing",
+      moduleNumber: 1,
+      timeLimitMinutes: 32,
+      difficultyTrack: "Baseline",
+      questions: [
+        {
+          id: "rw-m1-q1",
+          questionNumber: 1,
+          domain: "Craft and Structure",
+          skill: "Words in Context",
+          questionType: "MCQ",
+          passageText: "While many nineteenth-century landscape painters sought to capture the untamed grandeur of wilderness with dramatic brushstrokes, Fitz Henry Lane favored a more _____ approach, rendering coastal scenes in New England with glassy, almost mathematical precision.",
+          questionPrompt: "Which choice completes the text with the most logical and precise word or phrase?",
+          options: [
+            { id: "A", text: "measured" },
+            { id: "B", text: "volatile" },
+            { id: "C", text: "impulsive" },
+            { id: "D", text: "obscure" },
+          ],
+          correctAnswer: "A",
+          explanation: "Choice A is the best answer because 'measured' means careful and restrained, which directly contrasts with 'dramatic brushstrokes' and aligns with 'mathematical precision.'",
+        },
+        {
+          id: "rw-m1-q2",
+          questionNumber: 2,
+          domain: "Expression of Ideas",
+          skill: "Transitions",
+          questionType: "MCQ",
+          passageText: "Bioluminescent fungi emit a faint green glow that attracts nocturnal insects to help disperse fungal spores across the forest floor. _____ some mycologists previously hypothesized that the glow was merely an accidental metabolic byproduct with no ecological function.",
+          questionPrompt: "Which choice completes the text with the most logical transition?",
+          options: [
+            { id: "A", text: "Consequently," },
+            { id: "B", text: "By contrast," },
+            { id: "C", text: "Furthermore," },
+            { id: "D", text: "Similarly," },
+          ],
+          correctAnswer: "B",
+          explanation: "Choice B is correct because the second sentence presents an earlier, contrasting scientific view against the established ecological function described in the first sentence.",
+        },
+      ],
+    },
+    {
+      moduleId: "math_module_1",
+      section: "Math",
+      moduleNumber: 1,
+      timeLimitMinutes: 35,
+      difficultyTrack: "Baseline",
+      questions: [
+        {
+          id: "math-m1-q1",
+          questionNumber: 1,
+          domain: "Algebra",
+          skill: "Linear Equations in One Variable",
+          questionType: "MCQ",
+          passageText: null,
+          questionPrompt: "If $4(2x - 3) + 7 = 27$, what is the value of $x$?",
+          options: [
+            { id: "A", text: "$3$" },
+            { id: "B", text: "$4$" },
+            { id: "C", text: "$5$" },
+            { id: "D", text: "$8$" },
+          ],
+          correctAnswer: "B",
+          explanation: "Subtract 7 from both sides to get $4(2x - 3) = 20$. Divide by 4 to get $2x - 3 = 5$, then add 3 to get $2x = 8$, which gives $x = 4$.",
+        },
+        {
+          id: "math-m1-q2",
+          questionNumber: 2,
+          domain: "Advanced Math",
+          skill: "Nonlinear Functions",
+          questionType: "SPR",
+          passageText: null,
+          questionPrompt: "The function $f$ is defined by $f(x) = 3x^2 - 5x + 12$. What is the value of $f(4)$?",
+          options: [],
+          correctAnswer: "40",
+          acceptableAnswers: ["40", "40.0"],
+          explanation: "Substitute $x = 4$ into the function: $f(4) = 3(4)^2 - 5(4) + 12 = 3(16) - 20 + 12 = 48 - 20 + 12 = 40$.",
+        },
+      ],
+    },
+  ],
+};

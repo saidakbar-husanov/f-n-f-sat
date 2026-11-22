@@ -1,0 +1,100 @@
+{
+  "formatVersion": "1.0",
+  "destination": {
+    "type": "challengeSet",
+    "section": "ebrw",
+    "setId": "rw-inference-challenge",
+    "title": "Reading Inference Challenge",
+    "description": "Hard inference and evidence questions drawn from several Reading and Writing domains."
+  },
+  "assets": [],
+  "questions": [
+    {
+      "id": "rwic-001",
+      "domain": "Information and Ideas",
+      "skill": "Inferences",
+      "difficulty": "Hard",
+      "questionType": "MCQ",
+      "passageText": "Marine biologist Aiko Tanaka found that coral colonies growing near underwater volcanic vents, where the water is unusually acidic, built skeletons nearly as dense as colonies in ordinary seawater. Corals in acidic water usually struggle to build dense skeletons. Tanaka also observed that the vent colonies hosted far more of a particular species of symbiotic algae than the other colonies did. Tanaka therefore suggests that ______",
+      "questionPrompt": "Which choice most logically completes the text?",
+      "options": [
+        {
+          "id": "A",
+          "text": "acidic water has no effect on how corals build their skeletons."
+        },
+        {
+          "id": "B",
+          "text": "the symbiotic algae may help the vent corals offset the effects of acidic water."
+        },
+        {
+          "id": "C",
+          "text": "corals near volcanic vents grow more slowly than corals elsewhere."
+        },
+        {
+          "id": "D",
+          "text": "the symbiotic algae cannot survive in ordinary seawater."
+        }
+      ],
+      "correctAnswer": "B",
+      "explanation": "The vent corals build dense skeletons despite acidic water, which usually prevents that, and the one difference noted is their unusually large algae population. That supports the inference that the algae help offset the acidity. A contradicts the text, and C and D are not supported."
+    },
+    {
+      "id": "rwic-002",
+      "domain": "Information and Ideas",
+      "skill": "Command of evidence",
+      "difficulty": "Hard",
+      "questionType": "MCQ",
+      "passageText": "A student is researching how library hours affect visits. The table shows average daily visits at a public library before and after it extended its evening hours.\n\n| Period | Weekday visits | Weekend visits |\n|---|---|---|\n| Before extension | 410 | 620 |\n| After extension | 505 | 615 |\n\nThe student claims that the extended evening hours increased visits mainly on weekdays.",
+      "questionPrompt": "Which choice most effectively uses data from the table to support the student's claim?",
+      "options": [
+        {
+          "id": "A",
+          "text": "Weekend visits were higher than weekday visits both before and after the extension."
+        },
+        {
+          "id": "B",
+          "text": "Weekday visits rose from 410 to 505, while weekend visits changed little, going from 620 to 615."
+        },
+        {
+          "id": "C",
+          "text": "After the extension, the library averaged 615 visits on weekends."
+        },
+        {
+          "id": "D",
+          "text": "Before the extension, weekday visits averaged 410."
+        }
+      ],
+      "correctAnswer": "B",
+      "explanation": "The claim compares the change on weekdays with the change on weekends. Only B gives both changes: a large weekday increase and almost no weekend change."
+    },
+    {
+      "id": "rwic-003",
+      "domain": "Craft and Structure",
+      "skill": "Words in context",
+      "difficulty": "Hard",
+      "questionType": "MCQ",
+      "passageText": "Although the committee's report was praised for its thoroughness, several reviewers found its conclusions **equivocal**: the authors seemed unwilling to commit to any single recommendation, instead presenting each option as equally defensible.",
+      "questionPrompt": "As used in the text, what does the word “equivocal” most nearly mean?",
+      "options": [
+        {
+          "id": "A",
+          "text": "noncommittal"
+        },
+        {
+          "id": "B",
+          "text": "inaccurate"
+        },
+        {
+          "id": "C",
+          "text": "exhaustive"
+        },
+        {
+          "id": "D",
+          "text": "controversial"
+        }
+      ],
+      "correctAnswer": "A",
+      "explanation": "The text explains that the authors would not commit to a recommendation and presented every option as equally defensible, so “equivocal” means noncommittal."
+    }
+  ]
+}

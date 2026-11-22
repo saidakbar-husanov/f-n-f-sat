@@ -1,0 +1,11 @@
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+# Single-page app: serve index.html for client-side routes such as /admin.
+# The /api/* function (declared via its own path config) takes precedence, so
+# this fallback only catches navigations the SPA itself handles.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

@@ -1,0 +1,203 @@
+{
+  "$schema": "./sat-test-import.schema.json",
+  "formatVersion": "2.0",
+  "testId": "example-mini-test-01",
+  "title": "Example Mini Test (import format demo)",
+  "description": "A two-module demonstration of the self-contained import format: a Markdown table, embedded images, a shared image, image answer choices and a student-produced response.",
+  "isAdaptive": false,
+  "breakMinutes": 10,
+  "assets": [
+    {
+      "id": "chart_enrollment",
+      "fileName": "chart_enrollment.png",
+      "mimeType": "image/png",
+      "alt": "Bar graph of club enrollment for 2020 through 2023: 20, 35, 50 and 42 students.",
+      "data": "iVBORw0KGgoAAAANSUhEUgAAAUAAAADICAIAAAAWZq/8AAADd0lEQVR42u3dsQ2lMBBFUZdDRkn0R0OUAxLkBGiwx/a52gKe/s5ZNnM5JXVb8RNIAEsCWBLAEsCSAJYEsCSAJYAlASwJYAlgSQBLAlgSwBLAkgCWBLCk5oCXO7++BLAEMMASwABLAEsCWAIYYAlggCWAJQEsAQywNDHgQ/lat73mHz/4ky+wYqoM2A/uv9ACGGCABTDAAAMMMMACWAALYIABBhhggAEGGGCABbAAFsAAAwwwwAALYAEsgAEGGGCAAQYYYIABFsACWAADDDDAAAMMMMAAAyyABbAABhhggAEGWAD75wZgAQwwwAADDDDAAAMMsAAGOCFgL+J4G8lLTt5Gki+wLzDAAhhggAEGGGABDDDAAhhggAEGGGCAAQYYYAEMMMACGGCAAQYYYAEMMMACGGCAAQYYYICRsBZggJEAGGCArQUYYCSsBRhgJAAGGGAkAAYYYGsBBhgJawEGGAmAAQbYWoABBthagAFGwlqAAUYCYIABthbgSMBeG/LakLeRvI3kC+wL7AsMMMDWAgwwEtYCDDASAAMMsLUAA4yEtQADjATAAAOMBMAAA2wtwAAjYS3AACMBMMAAAwwwwABbCzDASFgLMMBIAAwwwNYCDDAS1gIMMBIAAwwwEgADDLC1AAOMhLUAA4wEwAADbC3AAANsLcAAI2EtwAAjATDAAFsLcCRg7/dY622kGd9G8pWw1hcYYEdmLcAAW2stwI7MWoABdmTWAgwwEtYCDLC11gLsyKwFGGBHZi3AAFtrLcAAWwswwI7MWoABdmTWAgywtdYC7MisBRhgR2YtwAAjYS3AAFtrLcCOzFqAAXZk1gIMsLXWAuzIrAUYYEdmLcAAOzJrAQbYWmsBdmTWAgywI7MW4P8Ae7/HWm8jeRvJV8JaX2CAHZm1AANsrbUAOzJrAQbYkVkLMMBIWAswwNYCDLAjsxZggB2ZtQADbK21ADsyawEG2JFZCzDASFgLMMDWWguwI7MWYIAdmbUAA2yttQADbC3AADsyawEG2JFZCzDA1loLsCOzFmCAHZm1AAOMhLUAA2yttQA7MmsBTgj4c5X/2qy1NmTtS3MBlgarM8CSOv4vtCSAJYAlASwJYEkASwBLAlgSwJIAlgCWBLAkgCWAJQEsCWBJAEsASwJYEsCSAJYAlgSwJIAlgCUBLAlgSQBLo3YB/XcEIGij5jIAAAAASUVORK5CYII="
+    },
+    {
+      "id": "graph_choice_a",
+      "fileName": "graph_choice_a.png",
+      "mimeType": "image/png",
+      "alt": "Line through the origin rising to the right with slope 1.",
+      "data": "iVBORw0KGgoAAAANSUhEUgAAAIwAAACMCAIAAAAhotZpAAAB8UlEQVR42u3csRGCUBAAUcohsyT7s0kMzDQwZe/eDgUAbz58CO64dPsOtwCSIEESJEGCJEiCdLMez9fnWIR0nmdRCFJACFJYCFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJACFJAaDtSQmg1UkVoL1JIaClSS2gjUk5oHVJRaBdSVGgRUldoC1JaaAVSXWg+0gCh4UgzhCYjjREaizRJaCbSMKGBSPOE/iOdqb6EWie/YiWNXEOjkAYLDUH6fcpBuvsaghR4ykEKvIcgBXYKkAJ7OUiB3TakwPcQpMAXK6TAPwVIdxeCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCCFBCC1JiiuRqpMud0L1JoEu1SpNas4I1IuWnO65CK87Z3IUUnou9FCl3SUqRLrT8OgiRIkAQJkiAJ0vDe+kNZJg7XTOsAAAAASUVORK5CYII="
+    },
+    {
+      "id": "graph_choice_b",
+      "fileName": "graph_choice_b.png",
+      "mimeType": "image/png",
+      "alt": "Line through the origin falling to the right with slope -1.",
+      "data": "iVBORw0KGgoAAAANSUhEUgAAAIwAAACMCAIAAAAhotZpAAAB40lEQVR42u3dsRECMQwAQcr5jJLojyYhIPyECP6kvXEF3pECJ769dPlurgCSIEESJEGCJEj6Gun+eH6OawogtZyO41iKFHLahRR1WodUdNqIlHNaitRy2osUclqNVHHajpRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwghRwgpR/j4DE6R9IR6rz3gu1YpIGz9PA/5PmOQ1EOu89SFdEGjZPY5EmOU1GGuM0HGmG03ykAU4rkOpOW5DSTouQuk67kKJO65CKThuRck5LkVpOe5FCTquRKk7bkRJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkAJOkC7ktAgpF6QJQYIkSJAESZAg6ae9AfpDWSYQoUKTAAAAAElFTkSuQmCC"
+    },
+    {
+      "id": "graph_choice_c",
+      "fileName": "graph_choice_c.png",
+      "mimeType": "image/png",
+      "alt": "Horizontal line crossing the y-axis above the origin.",
+      "data": "iVBORw0KGgoAAAANSUhEUgAAAIwAAACMCAIAAAAhotZpAAABKklEQVR42u3WwREAEAwAQeXkpyT9aZK3BhLD3qQCO0hbur7mCCAJEiRBEiRIgiRIkMqLCEiQIEGCBAkSJEiQIEGCBAkSJEiQIEGCBAkSJEiQIEGCBAkSJEiQIEGCBAkSJEiQIEGCBAkSJEiQIEGCBAkSJEiQIEGCBOkrpD6myRxIkEwVkj/J4gAJEiRIkCBBggQJEiRIkCBBggQJEiRIkCBBggQJEqQEpFBWbpLnDhIkSJAgQYIECRIkSJAgQYIECRIkSJAgQYIECRIkSJAgQYIECRIkSJAgQYIECRIkSJAgQYIECRIkSJAgQYIECRIkSJAgQYIECRIkSJAgQYIECRIkSJAgQYIECRIkSJAgQYIECRIkSJAgQYIE6U2k94IESZAgCZIgQRIknW0iSvLH9bBr7wAAAABJRU5ErkJggg=="
+    },
+    {
+      "id": "graph_choice_d",
+      "fileName": "graph_choice_d.png",
+      "mimeType": "image/png",
+      "alt": "Steep line rising to the right that crosses the y-axis below the origin.",
+      "data": "iVBORw0KGgoAAAANSUhEUgAAAIwAAACMCAIAAAAhotZpAAABz0lEQVR42u3dwU0EMQyG0S1nbpREfzS5HLggEAIJb/zb+z6lgNE8ZeTMJbe74rt5BZAECZIgCRIkQRKkB/Ty+vaxIP2p67ogQfpRCBIkSKlCkCA9AdIBIUiQtiOdEYIEaTXSMSFIkPYinRSCBGkp0mEhSJA2Ip0XggRpHVKLECRIu5C6hCBBWoTUKAQJ0hakXiFIkFYgtQtBgjQfKUEIEqThSCFCkCBNRsoRggRpLFKUECRIM5HShCBBGogUKAQJ0jSkTCFIkEYhxQpBgjQHKVkIEqQhSOFCkCBNQMoXggQpHmmEECRI2UhThCBBCkYaJAQJUirSLCFIkCKRxglBgpSHNFHod6RrV5+R0p7NThq8jSBBSkKaKwQJUgzSaCFIkDKQpgtBghSAtEAIEqRupB1CkCC1Iq0RggSpD2mTECRITS0TggSJECRIhCBBek6krUKQIDUJHbugHhKkXUhfPnSQIEGqmBcgQYJUMXZDggSp4vQKCRKkfwtBggSpQggSJEgVQpAgQaoQggQJUoUQJEiQKoQgQYJUIQQJEqQKIUiQIFUIQYIEqUIIEiRIFUKQIEGqEIIECVKFECRIkL4h3TXij4MgQRIkSIIkSJB0undnPzUcPC5OoQAAAABJRU5ErkJggg=="
+    }
+  ],
+  "modules": [
+    {
+      "moduleId": "demo_rw_m1",
+      "section": "Reading and Writing",
+      "moduleNumber": 1,
+      "timeLimitMinutes": 6,
+      "difficultyTrack": "Baseline",
+      "questions": [
+        {
+          "id": "demo-rw-1",
+          "questionNumber": 1,
+          "questionType": "MCQ",
+          "domain": "Information and Ideas",
+          "skill": "Command of Evidence",
+          "difficulty": "Medium",
+          "passageText": "**Average Monthly Rainfall (mm) in Three Cities**\n\n| City | Jan | Apr | Jul | Oct |\n|---|---:|---:|---:|---:|\n| Lumen | 82 | 64 | 21 | 70 |\n| Corvala | 45 | 51 | 49 | 47 |\n| Tessic | 12 | 30 | 96 | 40 |\n\nA geography student claims that one of the three cities receives roughly the same amount of rain in every season.",
+          "questionPrompt": "Which choice best uses data from the table to support the student's claim?",
+          "options": [
+            {
+              "id": "A",
+              "text": "Lumen receives 82 mm of rain in January and 21 mm in July."
+            },
+            {
+              "id": "B",
+              "text": "Corvala's monthly rainfall stays between 45 mm and 51 mm in all four months shown."
+            },
+            {
+              "id": "C",
+              "text": "Tessic receives more rain in July than either of the other cities."
+            },
+            {
+              "id": "D",
+              "text": "Each city receives at least 12 mm of rain in every month shown."
+            }
+          ],
+          "correctAnswer": "B",
+          "explanation": "Choice B is correct: Corvala's values (45, 51, 49, 47 mm) vary by only 6 mm, which supports a claim of steady rainfall."
+        },
+        {
+          "id": "demo-rw-2",
+          "questionNumber": 2,
+          "questionType": "MCQ",
+          "domain": "Information and Ideas",
+          "skill": "Command of Evidence",
+          "difficulty": "Easy",
+          "passageText": "![Bar graph of club enrollment, 2020–2023](asset:chart_enrollment)\n\nThe graph shows how many students joined a school's robotics club in each year from 2020 to 2023. Enrollment grew every year until 2023, when it fell slightly.",
+          "questionPrompt": "According to the graph, in which year did enrollment first exceed 40 students?",
+          "options": [
+            {
+              "id": "A",
+              "text": "2020"
+            },
+            {
+              "id": "B",
+              "text": "2021"
+            },
+            {
+              "id": "C",
+              "text": "2022"
+            },
+            {
+              "id": "D",
+              "text": "2023"
+            }
+          ],
+          "correctAnswer": "C",
+          "explanation": "The third bar (2022) reaches 50 students, the first value above 40."
+        }
+      ]
+    },
+    {
+      "moduleId": "demo_math_m1",
+      "section": "Math",
+      "moduleNumber": 1,
+      "timeLimitMinutes": 8,
+      "difficultyTrack": "Baseline",
+      "questions": [
+        {
+          "id": "demo-math-1",
+          "questionNumber": 1,
+          "questionType": "MCQ",
+          "domain": "Algebra",
+          "skill": "Linear functions",
+          "difficulty": "Easy",
+          "passageText": null,
+          "questionPrompt": "Which graph shows the line $y = -x$?",
+          "options": [
+            {
+              "id": "A",
+              "text": "![Line through the origin rising to the right](asset:graph_choice_a)"
+            },
+            {
+              "id": "B",
+              "text": "![Line through the origin falling to the right](asset:graph_choice_b)"
+            },
+            {
+              "id": "C",
+              "text": "![Horizontal line above the origin](asset:graph_choice_c)"
+            },
+            {
+              "id": "D",
+              "text": "",
+              "image": "asset:graph_choice_d"
+            }
+          ],
+          "correctAnswer": "B",
+          "explanation": "The line $y = -x$ passes through the origin and falls one unit for every unit it moves right, as in graph B."
+        },
+        {
+          "id": "demo-math-2",
+          "questionNumber": 2,
+          "questionType": "SPR",
+          "domain": "Problem-Solving and Data Analysis",
+          "skill": "One-variable data: distributions and measures of center and spread",
+          "difficulty": "Medium",
+          "passageText": null,
+          "questionPrompt": "![Bar graph of club enrollment, 2020–2023](asset:chart_enrollment)\n\nThe graph shows club enrollment of 20, 35, 50 and 42 students for 2020 through 2023. What is the mean enrollment over the four years?",
+          "options": [],
+          "correctAnswer": "36.75",
+          "acceptableAnswers": [
+            "147/4"
+          ],
+          "explanation": "$(20 + 35 + 50 + 42) \\div 4 = 147 \\div 4 = 36.75$."
+        },
+        {
+          "id": "demo-math-3",
+          "questionNumber": 3,
+          "questionType": "MCQ",
+          "domain": "Problem-Solving and Data Analysis",
+          "skill": "Percentages",
+          "difficulty": "Medium",
+          "passageText": null,
+          "questionPrompt": "![Bar graph of four values: 45, 30, 20 and 10](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAUAAAADICAIAAAAWZq/8AAADFElEQVR42u3d0a2FIBRFQcqhRCvVcjShAD8IgoczK6+AnfuY4B/llhS24ieQAJYEsCSAJYAlASwJYEkASwBLAlgSwBLAkgCWBLAkgCWAJQEsCWBJywHXll9fAlgCGGAJYIAlgCUBLAEMsAQwwBLAkgCWAAZYSgz4ktRyA0tuYIAlgAGWAJYEsAQwwBLAAEsASwJYAhhgCWBJAEsAAywB/Bng86gz/5wSAQywBDDAEsAAC2CAJYABlgAGWAADDLAABlgCGGAJYIAFMMASwABLAAMsrQbc/ZDMZMBe7pG3kdzAkk9ogCWAARbAAEsAAywBDLAABhhgAQywBDDAEsAAC2CAJYABlgAGWAIYYAEMsAQwwBLAAAtggAEWwABLAAMsAQywAAZYAhhgCWCABTDAAAtggCWAAZZiAE7yNpKXnORtpMA3sO8F+YQGGGABDLAABhhgAQwwwAIYYIABBhhgAQwwwAIYYIAFMMACGGCABTDAAAtggAEWwAALYIABFsAAAyyAAQYYYIABFsAAAyyAAQZYAAMsgAEGWAADDLAABhhgAQywAAYYYAEMMMCKBdjbSNZ6FcnbSG5g3wtuYICRABhggK0FGGAkrBXASAAMMMAAAwwwwNYCDDAS1gpgJAAGGGBrAQYYCWsFMBIAAwwwwAADDLC1AAOMhLUCGAmAAQbYWoABBthagAFGwloBjATAAANsLcAAI2GtAEYCYIABBhhggAG2FmCAkbBWACMBMMAjAXttyFovOXkbyZ1mbd7vBYAdMmsBBthaawF2yKwFGGCHzFqAAUbCWoABttZagB0yawEG2CGzFmCArbUWYICtBRhgh8xagAF2yKwFGGBrrQXYIbMWYIAdMmsBBhgJawEG2FqAAXbIrAUYYIfMWoABttZagB0yawEG2CGzFmCAkbAWYICttRZgh8xagH8MuLvJ/zZrrR2y9qVcgKXNCgZYUuBPaEkASwBLAlgSwJIAlgCWBLAkgCUBLAEsCWBJAEsASwJYEsCSAJYAlgSwJIAlASwBLAlgSQBLAEsCWBLAkgCWdu0BCgj32mJhK8gAAAAASUVORK5CYII=)\n\nThe bars show 45, 30, 20 and 10 units. The first bar is what percent of the total?",
+          "options": [
+            {
+              "id": "A",
+              "text": "$30\\%$"
+            },
+            {
+              "id": "B",
+              "text": "$40\\%$"
+            },
+            {
+              "id": "C",
+              "text": "$43\\%$"
+            },
+            {
+              "id": "D",
+              "text": "$45\\%$"
+            }
+          ],
+          "correctAnswer": "C",
+          "explanation": "$45 \\div 105 \\approx 0.43$, so about $43\\%$.\n\n| Bar | Units |\n|---|---:|\n| 1 | 45 |\n| Total | 105 |"
+        }
+      ]
+    }
+  ]
+}

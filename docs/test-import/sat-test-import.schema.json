@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fnf-sat.org/api/tests/import/schema",
+  "title": "F&F SAT full-length test import file",
+  "description": "One self-contained JSON file describing a complete SAT practice test: metadata, embedded image assets and ordered modules of ordered questions. Version 2.0. Files written for the September 2026 importer (no formatVersion, inline Markdown images) are also valid.",
+  "type": "object",
+  "required": ["testId", "title", "modules"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "formatVersion": {
+      "description": "Version of this format the file was written for. Use \"2.0\".",
+      "type": "string",
+      "pattern": "^[12](\\.\\d+)?$"
+    },
+    "testId": {
+      "description": "Stable identifier for the test (e.g. \"dsat-2026-11\"). Re-importing a file with an existing testId never overwrites that test; it can only be imported as a separate copy.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "description": { "type": "string", "maxLength": 4000 },
+    "isAdaptive": {
+      "description": "false (default when every section has one Module 2) imports a fixed-form test. true requires, per routed section, a Module 1 and Module 2 variants tagged with difficultyTrack \"Easy\"/\"Standard\"/\"Hard\". Students scoring at least 60% on Module 1 are routed to Hard.",
+      "type": "boolean"
+    },
+    "routing": {
+      "description": "Optional. Only a 60% threshold on the Module 1 result is supported; anything else is reported as an error.",
+      "type": "object",
+      "properties": {
+        "threshold": { "type": "number", "description": "0.6 or 60" },
+        "rule": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "breakMinutes": {
+      "description": "Break between the Reading and Writing and the Math sections. Default 10.",
+      "type": "integer", "minimum": 0, "maximum": 60
+    },
+    "totalTimeMinutes": {
+      "description": "Optional. Defaults to the sum of the module time limits.",
+      "type": "integer", "minimum": 1, "maximum": 600
+    },
+    "assets": {
+      "description": "Images used anywhere in the test. Reference one from text with ![alt text](asset:ID), or from an image field with \"asset:ID\". One asset may be referenced by any number of questions.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/asset" }
+    },
+    "vocabulary": {
+      "description": "Optional. SAT vocabulary words to add to the shared vocabulary bank when an admin or mentor saves the test. Same fields as a vocabulary upload; a word already in the bank is updated (mentors only update words they created). Questions may also carry their own \"vocabulary\" list.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/vocabWord" }
+    },
+    "modules": {
+      "description": "Modules in the order students take them.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/module" }
+    }
+  },
+  "$defs": {
+    "vocabWord": {
+      "type": "object",
+      "required": ["word", "definition"],
+      "properties": {
+        "id": { "type": "string", "maxLength": 80 },
+        "word": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "partOfSpeech": { "type": "string" },
+        "definition": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "satContextSentence": { "type": "string", "description": "Contains \"_____\" where the word fits." },
+        "distractors": { "type": "array", "items": { "type": "string" }, "maxItems": 3 },
+        "synonyms": { "type": "array", "items": { "type": "string" } },
+        "antonyms": { "type": "array", "items": { "type": "string" } },
+        "difficulty": { "type": "string", "enum": ["Foundation", "Medium", "Advanced"] },
+        "tags": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "asset": {
+      "type": "object",
+      "required": ["id", "mimeType", "data"],
+      "properties": {
+        "id": {
+          "description": "Unique within the file.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,120}$"
+        },
+        "mimeType": {
+          "type": "string",
+          "enum": ["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"]
+        },
+        "data": {
+          "description": "Base64-encoded image bytes (no data: prefix needed, but a data URI is accepted). The decoded image must be 3 MB or smaller and must really be of the declared mimeType.",
+          "type": "string",
+          "contentEncoding": "base64",
+          "minLength": 4
+        },
+        "alt": {
+          "description": "Default alternative text, used when a reference gives none.",
+          "type": "string"
+        },
+        "fileName": {
+          "description": "Optional original filename. A Markdown image that names this file (e.g. ![x](graph_08.png)) resolves to this asset.",
+          "type": "string"
+        }
+      }
+    },
+    "richText": {
+      "description": "Plain text, Markdown or HTML. Supported Markdown: paragraphs (blank line), line breaks (single newline), **bold**, *italic*, <u>underline</u>, <sub>/<sup>, - bullet and 1. numbered lists, > quotes, # headings, GitHub-style pipe tables (header row + --- separator; :---: alignment), and images ![alt](data:image/png;base64,…) or ![alt](asset:ID). Math: $inline$ and $$display$$ LaTeX.",
+      "type": ["string", "null"]
+    },
+    "imageRef": {
+      "description": "\"asset:ID\", a base64 data URI, or { \"assetId\": \"ID\" }.",
+      "oneOf": [
+        { "type": "string", "pattern": "^(asset:|data:image/)" },
+        { "type": "object", "required": ["assetId"], "properties": { "assetId": { "type": "string" } } }
+      ]
+    },
+    "module": {
+      "type": "object",
+      "required": ["moduleId", "section", "moduleNumber", "timeLimitMinutes", "questions"],
+      "properties": {
+        "moduleId": { "description": "Unique within the file.", "type": "string", "minLength": 1, "maxLength": 80 },
+        "title": { "type": "string", "maxLength": 160 },
+        "section": { "type": "string", "enum": ["Reading and Writing", "Math"] },
+        "moduleNumber": { "type": "integer", "minimum": 1, "maximum": 9 },
+        "timeLimitMinutes": { "type": "number", "exclusiveMinimum": 0, "maximum": 600 },
+        "difficultyTrack": {
+          "description": "\"Baseline\" for Module 1. For adaptive Module 2 variants: \"Easy\", \"Standard\" or \"Hard\".",
+          "type": "string",
+          "enum": ["Baseline", "Standard", "Easy", "Hard", ""]
+        },
+        "questions": {
+          "description": "Questions in the order students see them.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/question" }
+        }
+      }
+    },
+    "option": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "description": "A, B, C, D in that order.", "type": "string", "enum": ["A", "B", "C", "D"] },
+        "text": { "$ref": "#/$defs/richText" },
+        "image": { "$ref": "#/$defs/imageRef" }
+      },
+      "anyOf": [
+        { "required": ["text"], "properties": { "text": { "type": "string", "minLength": 1 } } },
+        { "required": ["image"] }
+      ]
+    },
+    "question": {
+      "type": "object",
+      "required": ["id", "questionType", "questionPrompt", "correctAnswer"],
+      "properties": {
+        "id": { "description": "Unique across the whole file.", "type": "string", "minLength": 1, "maxLength": 120 },
+        "questionNumber": { "description": "Should equal the question's 1-based position in its module.", "type": "integer", "minimum": 1 },
+        "questionType": { "type": "string", "enum": ["MCQ", "SPR"] },
+        "domain": { "type": "string" },
+        "skill": { "type": "string" },
+        "difficulty": { "type": "string", "enum": ["Easy", "Medium", "Hard"] },
+        "passageText": { "$ref": "#/$defs/richText" },
+        "questionPrompt": { "$ref": "#/$defs/richText" },
+        "image": { "$ref": "#/$defs/imageRef", "description": "Optional figure shown above the passage (or above the prompt when there is no passage)." },
+        "vocabulary": { "type": "array", "items": { "$ref": "#/$defs/vocabWord" }, "description": "Optional vocabulary words used in this question; added to the shared bank with the test." },
+        "options": { "type": "array", "items": { "$ref": "#/$defs/option" } },
+        "correctAnswer": { "description": "MCQ: the option id. SPR: the answer as a student would type it (e.g. \"36.75\" or \"3/4\").", "type": "string", "minLength": 1 },
+        "acceptableAnswers": { "description": "SPR only: other forms that also score as correct. Equivalent fractions and decimals already match.", "type": "array", "items": { "type": "string" } },
+        "explanation": { "$ref": "#/$defs/richText" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "questionType": { "const": "MCQ" } } },
+          "then": {
+            "required": ["options"],
+            "properties": { "options": { "minItems": 2, "maxItems": 4 }, "correctAnswer": { "enum": ["A", "B", "C", "D"] } }
+          }
+        }
+      ]
+    }
+  }
+}
