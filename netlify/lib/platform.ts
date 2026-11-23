@@ -498,7 +498,7 @@ export async function finalizeLeagues() {
       .onConflictDoNothing().returning({ key: settings.key });
     if (!claimed.length) continue;
     try {
-    const excluded = new Set((await db.select({ id: users.id }).from(users).where(or(sql`${users.role} <> 'student'`, eq(users.status, "banned")))).map((u) => u.id));
+    const excluded = new Set((await db.select({ id: users.id }).from(users).where(or(sql`${users.role} <> 'student'`, inArray(users.status, ["banned", "deactivated", "deleted"])))).map((u) => u.id));
     const ranked = rankRows((await pointsBoard(p.fromTs, p.toTs, p.fromDay, p.toDay)).filter((x) => !excluded.has(x.studentId)).map((x) => ({ ...x, sort: [x.value] })));
     const winners = ranked.filter((x) => x.rank === 1).map((x) => x.studentId);
     const awards: { id: number; key: string }[] = winners.map((id) => ({ id, key: p.kind === "week" ? "weekly_champion" : "monthly_champion" }));
@@ -708,6 +708,8 @@ export async function handlePlatform(req: Request, parts: string[], deps: FullTe
     const prefs = { ...(auth.user!.preferences || {}) } as Record<string, unknown>;
     if (["uz", "ru"].includes(b.vocabLang)) prefs.vocabLang = b.vocabLang;
     if (["en2x", "x2en"].includes(b.vocabDir)) prefs.vocabDir = b.vocabDir;
+    // Lessons teaching mode: English–Uzbek ("uz") or English–Russian ("ru").
+    if (["uz", "ru"].includes(b.teachLang)) prefs.teachLang = b.teachLang;
     await db.update(users).set({ preferences: prefs }).where(eq(users.id, auth.user!.id));
     return json({ preferences: prefs });
   }
@@ -988,7 +990,7 @@ export async function handlePlatform(req: Request, parts: string[], deps: FullTe
     const rows = await performanceRows(u, url);
     let options: any = {};
     if (u.role !== "student") {
-      const cls = await db.select({ id: classes.id, name: classes.name, mentorId: classes.mentorId }).from(classes).where(u.role === "mentor" ? eq(classes.mentorId, u.id) : undefined);
+      const cls = await db.select({ id: classes.id, name: classes.name, mentorId: classes.mentorId }).from(classes).where(u.role === "mentor" ? and(eq(classes.mentorId, u.id), isNull(classes.deletedAt)) : isNull(classes.deletedAt));
       const mentors = u.role === "admin" ? await db.select({ id: users.id, displayName: users.displayName }).from(users).where(eq(users.role, "mentor")) : [];
       const sIds = u.role === "mentor" ? await mentorStudentIds(u.id) : null;
       const studs = await db.select({ id: users.id, displayName: users.displayName }).from(users)
@@ -1009,7 +1011,7 @@ export async function handlePlatform(req: Request, parts: string[], deps: FullTe
     const period = ["daily", "weekly", "monthly", "all"].includes(String(url.searchParams.get("period"))) ? String(url.searchParams.get("period")) : "weekly";
     let classId = int(url.searchParams.get("classId"));
     const myClasses = u.role === "student" ? await activeClassIds(u.id)
-      : (await db.select({ id: classes.id }).from(classes).where(u.role === "mentor" ? eq(classes.mentorId, u.id) : undefined)).map((c) => c.id);
+      : (await db.select({ id: classes.id }).from(classes).where(u.role === "mentor" ? and(eq(classes.mentorId, u.id), isNull(classes.deletedAt)) : isNull(classes.deletedAt))).map((c) => c.id);
     if (classId && !myClasses.includes(classId)) classId = null;
     const classList = myClasses.length ? await db.select({ id: classes.id, name: classes.name }).from(classes).where(inArray(classes.id, myClasses)) : [];
     const rows = await leaderboard(category, period, classId);
@@ -1057,7 +1059,7 @@ export async function handlePlatform(req: Request, parts: string[], deps: FullTe
     const classId = int(sub);
     if (method === "GET" && !classId) {
       const [cls, mentors, students, enroll] = await Promise.all([
-        db.select().from(classes).orderBy(classes.name),
+        db.select().from(classes).where(isNull(classes.deletedAt)).orderBy(classes.name),
         db.select({ id: users.id, displayName: users.displayName, status: users.status }).from(users).where(eq(users.role, "mentor")).orderBy(users.displayName),
         db.select({ id: users.id, displayName: users.displayName, username: users.username, email: users.email, phone: users.phone, status: users.status }).from(users).where(eq(users.role, "student")).orderBy(users.displayName),
         db.select().from(classEnrollments).where(eq(classEnrollments.status, "active")),
@@ -1084,7 +1086,7 @@ export async function handlePlatform(req: Request, parts: string[], deps: FullTe
       await notify([mentor.id], { kind: "class", title: `You were assigned to the class “${name}”`, link: { view: "classes" } });
       return json(row, 201);
     }
-    const [cls] = classId ? await db.select().from(classes).where(eq(classes.id, classId)).limit(1) : [];
+    const [cls] = classId ? await db.select().from(classes).where(and(eq(classes.id, classId), isNull(classes.deletedAt))).limit(1) : [];
     if (!cls) return json({ error: "Class not found." }, 404);
     if (method === "PATCH" && !sub2) {
       const set: Partial<typeof classes.$inferInsert> = {};
@@ -1143,7 +1145,7 @@ export async function handlePlatform(req: Request, parts: string[], deps: FullTe
       const [platform, rows, plat] = await Promise.all([platformLimits(), db.select().from(usageLimits), readSetting("platform", DEFAULT_PLATFORM)]);
       const ids = rows.filter((r) => r.scope === "user").map((r) => r.targetId);
       const people = ids.length ? await db.select({ id: users.id, displayName: users.displayName }).from(users).where(inArray(users.id, ids)) : [];
-      const cls = await db.select({ id: classes.id, name: classes.name }).from(classes);
+      const cls = await db.select({ id: classes.id, name: classes.name }).from(classes).where(isNull(classes.deletedAt));
       return json({
         platform, timezone: validTz(plat.timezone) ? plat.timezone : "UTC", kinds: LIMIT_KINDS,
         classes: cls.map((c) => ({ ...c, limits: cleanLimits(rows.find((r) => r.scope === "class" && r.targetId === c.id)?.limits) })),

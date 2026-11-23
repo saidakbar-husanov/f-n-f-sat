@@ -1,6 +1,6 @@
 // netlify/lib/vocab.ts — SAT Vocabulary Bank, Sets, Tasks and Mastery API.
 // Mounted by the main /api function under /api/vocab/*.
-import { eq, and, inArray, desc, sql } from "drizzle-orm";
+import { eq, and, inArray, desc, sql, isNull } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "../../db/index.js";
 import {
@@ -173,8 +173,8 @@ async function canManageTask(user: DbUser, task: TaskRow) {
 // Students and classes a mentor (or admin) may target.
 export async function assignableTargets(user: DbUser) {
   const ownClasses = user.role === "admin"
-    ? await db.select().from(classes).orderBy(desc(classes.createdAt))
-    : await db.select().from(classes).where(eq(classes.mentorId, user.id)).orderBy(desc(classes.createdAt));
+    ? await db.select().from(classes).where(isNull(classes.deletedAt)).orderBy(desc(classes.createdAt))
+    : await db.select().from(classes).where(and(eq(classes.mentorId, user.id), isNull(classes.deletedAt))).orderBy(desc(classes.createdAt));
   const classIds = ownClasses.map((c) => c.id);
   const enroll = classIds.length
     ? await db.select().from(classEnrollments).where(and(inArray(classEnrollments.classId, classIds), eq(classEnrollments.status, "active")))

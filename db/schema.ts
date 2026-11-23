@@ -38,6 +38,11 @@ export const questions = pgTable("questions", {
   // order); they never appear in the bank, practice pickers or tests.
   challengeSetId: integer("challenge_set_id"),
   setPosition: integer("set_position").notNull().default(0),
+  // A bank question that is referenced by published mocks, tasks, attempts or
+  // lessons is never hard-deleted: "deleting" it moves scope to RETIRED, which
+  // drops it from every bank picker while keeping the content for review.
+  retiredAt: timestamp("retired_at"),
+  retiredBy: integer("retired_by"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (t) => [
   index("questions_bank_import_lookup").on(t.scope, t.section, t.category, t.externalId),
@@ -116,6 +121,11 @@ export const users = pgTable("users", {
   passwordChangedAt: timestamp("password_changed_at"),
   // Small per-user preferences (e.g. { vocabLang: "ru", vocabDir: "x2en" }).
   preferences: jsonb().$type<Record<string, unknown>>().notNull().default({}),
+  // status "deactivated": access revoked, data kept. status "deleted": personal
+  // data erased; the row stays as an anonymous tombstone so historical scores
+  // and analytics keep a valid owner.
+  deactivatedAt: timestamp("deactivated_at"),
+  deletedAt: timestamp("deleted_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -152,6 +162,10 @@ export const classes = pgTable("classes", {
   mentorId: integer("mentor_id").notNull(),
   name: text().notNull(),
   description: text().notNull().default(""),
+  // Soft delete: a deleted class disappears from every list and loses lesson
+  // access, while past tasks and scores that point at it still resolve.
+  deletedAt: timestamp("deleted_at"),
+  deletedBy: integer("deleted_by"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -352,7 +366,143 @@ export const lessons = pgTable("lessons", {
   createdBy: integer("created_by"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+  // ── Class learning paths ──
+  // "public": listed in the open Online Lessons library (the original behaviour).
+  // "class": only reachable through a class curriculum the student belongs to.
+  visibility: text().notNull().default("public"),
+  // Set on a class-specific copy: the class that owns it and the lesson it was copied from.
+  ownerClassId: integer("owner_class_id"),
+  sourceLessonId: integer("source_lesson_id"),
+  // "youtube" (videoId) | "url" (direct video file link) | "none"
+  videoProvider: text("video_provider").notNull().default("youtube"),
+  videoUrl: text("video_url").notNull().default(""),
+  // Bilingual teaching content: { en, uz, ru } strings. SAT questions stay English.
+  objective: jsonb().$type<Record<string, string>>().notNull().default({}),
+  // { explanation:{en,uz,ru}, transcript:{en,uz,ru}, vocabulary:[{term,en,uz,ru}],
+  //   workedExamples:[{title, body:{en,uz,ru}}], slidesUrl }
+  content: jsonb().$type<Record<string, unknown>>().notNull().default({}),
+  skillTags: jsonb("skill_tags").$type<string[]>().notNull().default([]),
+  practiceQuestionIds: jsonb("practice_question_ids").$type<number[]>().notNull().default([]),
+  archivedAt: timestamp("archived_at"),
+  updatedBy: integer("updated_by"),
 });
+
+// One unit of a class curriculum (Class → Unit → Lesson → Practice).
+// status: "draft" | "published" | "archived"
+export const learningUnits = pgTable("learning_units", {
+  id: serial().primaryKey(),
+  classId: integer("class_id").notNull(),
+  title: text().notNull(),
+  titleI18n: jsonb("title_i18n").$type<Record<string, string>>().notNull().default({}),
+  description: text().notNull().default(""),
+  position: integer().notNull().default(0),
+  status: text().notNull().default("draft"),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (t) => [index("learning_units_class").on(t.classId, t.position)]);
+
+// A lesson placed in a unit. The same lesson row can be placed in several
+// classes (shared); a class-specific copy is a separate lesson row.
+// status: "draft" | "published" | "archived"; assignedAt/dueAt mark it as assigned work.
+export const learningPlacements = pgTable("learning_placements", {
+  id: serial().primaryKey(),
+  classId: integer("class_id").notNull(),
+  unitId: integer("unit_id").notNull(),
+  lessonId: integer("lesson_id").notNull(),
+  position: integer().notNull().default(0),
+  status: text().notNull().default("draft"),
+  publishedAt: timestamp("published_at"),
+  assignedAt: timestamp("assigned_at"),
+  dueAt: timestamp("due_at"),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => [
+  uniqueIndex("learning_placements_unit_lesson").on(t.unitId, t.lessonId),
+  index("learning_placements_class").on(t.classId, t.status),
+  index("learning_placements_lesson").on(t.lessonId),
+]);
+
+// Files (Netlify Blobs) and links attached to a lesson.
+// kind: "pdf" | "slides" | "download" | "captions" | "link"; lang: "en" | "uz" | "ru" | "all"
+export const lessonMaterials = pgTable("lesson_materials", {
+  id: serial().primaryKey(),
+  lessonId: integer("lesson_id").notNull(),
+  kind: text().notNull().default("download"),
+  title: text().notNull(),
+  lang: text().notNull().default("all"),
+  blobKey: text("blob_key"),
+  url: text().notNull().default(""),
+  fileName: text("file_name").notNull().default(""),
+  contentType: text("content_type").notNull().default(""),
+  size: integer().notNull().default(0),
+  position: integer().notNull().default(0),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => [index("lesson_materials_lesson").on(t.lessonId, t.position)]);
+
+// Lesson completion (separate from skill mastery). Keyed per student and
+// lesson — not per class — so progress survives class moves and is shared by
+// every class that reuses the lesson.
+export const lessonProgress = pgTable("lesson_progress", {
+  id: serial().primaryKey(),
+  studentId: integer("student_id").notNull(),
+  lessonId: integer("lesson_id").notNull(),
+  videoPositionSeconds: integer("video_position_seconds").notNull().default(0),
+  videoDurationSeconds: integer("video_duration_seconds").notNull().default(0),
+  videoCompletedAt: timestamp("video_completed_at"),
+  completedAt: timestamp("completed_at"),
+  // { answers: { [questionId]: { selected, correct, assisted } }, currentIndex }
+  practiceState: jsonb("practice_state").$type<Record<string, unknown>>().notNull().default({}),
+  lastClassId: integer("last_class_id"),
+  lastLang: text("last_lang").notNull().default(""),
+  startedAt: timestamp("started_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (t) => [
+  uniqueIndex("lesson_progress_student_lesson").on(t.studentId, t.lessonId),
+  index("lesson_progress_lesson").on(t.lessonId),
+]);
+
+// Mastery evidence: one row per student per distinct question, whatever the
+// number of retries, classes or language modes it was answered in.
+export const skillEvidence = pgTable("skill_evidence", {
+  id: serial().primaryKey(),
+  studentId: integer("student_id").notNull(),
+  questionId: integer("question_id").notNull(),
+  skill: text().notNull(),
+  domain: text().notNull().default(""),
+  section: text().notNull().default(""),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  assistedCount: integer("assisted_count").notNull().default(0),
+  assistedCorrectCount: integer("assisted_correct_count").notNull().default(0),
+  // First attempt without help — the one accuracy for "Mastered" is measured on.
+  firstIndependentAt: timestamp("first_independent_at"),
+  firstIndependentCorrect: boolean("first_independent_correct"),
+  // First independently correct response — the one that earns points.
+  independentCorrectAt: timestamp("independent_correct_at"),
+  pointsAwarded: integer("points_awarded").notNull().default(0),
+  lastSelected: text("last_selected").notNull().default(""),
+  lastCorrect: boolean("last_correct").notNull().default(false),
+  lastAssisted: boolean("last_assisted").notNull().default(false),
+  lastAttemptAt: timestamp("last_attempt_at"),
+  lessonId: integer("lesson_id"),
+  classId: integer("class_id"),
+  lang: text().notNull().default(""),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => [
+  uniqueIndex("skill_evidence_student_question").on(t.studentId, t.questionId),
+  index("skill_evidence_student_skill").on(t.studentId, t.skill),
+]);
+
+// Level-ups, recorded once per student, skill and level.
+// level: "practising" | "proficient" | "mastered"
+export const skillLevelUps = pgTable("skill_level_ups", {
+  id: serial().primaryKey(),
+  studentId: integer("student_id").notNull(),
+  skill: text().notNull(),
+  level: text().notNull(),
+  reachedAt: timestamp("reached_at").defaultNow(),
+}, (t) => [uniqueIndex("skill_level_ups_student_skill_level").on(t.studentId, t.skill, t.level)]);
 
 // Student questions on a lesson, and the replies admins and mentors leave.
 export const lessonComments = pgTable("lesson_comments", {
