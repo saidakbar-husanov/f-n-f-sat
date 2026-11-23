@@ -1,7 +1,7 @@
 // netlify/functions/api.ts — single entry point for all Fast&Free SAT data.
 // Routes everything under /api/* against the Netlify Database.
 import type { Config } from "@netlify/functions";
-import { eq, and, or, desc, sql, inArray } from "drizzle-orm";
+import { eq, and, or, desc, sql, inArray, ne, isNull } from "drizzle-orm";
 import { getUser as getIdentityUser } from "@netlify/identity";
 import { randomBytes, timingSafeEqual, createPublicKey, createHash, verify as cryptoVerify } from "node:crypto";
 import { getStore } from "@netlify/blobs";
@@ -11,6 +11,7 @@ import {
   questions, attempts, pages, users, sessions, settings, classes,
   classInvites, classEnrollments, mentorActivationCodes, savedQuestions, assignments,
   tests, testModules, testModuleQuestions, testAttempts, testAssignments, lessons, lessonComments, testHighlights,
+  learningPlacements,
 } from "../../db/schema.js";
 import { SEED_QUESTIONS, SEED_PAGES } from "./seed-data.js";
 import { handleVocab } from "../lib/vocab.js";
@@ -28,6 +29,8 @@ import {
 import {
   auditLog, notifications, messages, badgeAwards, studentDailyActivity, usageLimits, questionReports,
 } from "../../db/schema.js";
+import { handleAdminOps, deleteOneQuestion, RETIRED } from "../lib/admin-ops.js";
+import { handleLearning, canOpenLibraryLesson } from "../lib/learning.js";
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -82,7 +85,7 @@ async function lookupUser(req: Request): Promise<DbUser | null> {
     const [s] = await db.select().from(sessions).where(eq(sessions.token, token));
     if (s) {
       const [u] = await db.select().from(users).where(eq(users.id, s.userId));
-      if (u) return u;
+      if (u && u.status !== "deleted") return u;
     }
   }
   try {
@@ -102,6 +105,8 @@ async function requireUser(req: Request, roles?: string[]) {
   const user = await userFromReq(req);
   if (!user) return { error: json({ error: "Sign in to continue." }, 401), user: null };
   if (user.status === "banned") return { error: json({ error: "This account has been banned." }, 403), user: null };
+  if (user.status === "deactivated" || user.status === "deleted")
+    return { error: json({ error: "This account has been deactivated by an administrator." }, 403), user: null };
   // After an admin password reset only the auth routes (me, logout, change
   // password) work until the user chooses a new password.
   if (user.mustChangePassword && !new URL(req.url).pathname.startsWith("/api/auth/"))
@@ -235,6 +240,7 @@ async function googleCallback(req: Request, url: URL) {
 
   const u = await oauthUpsert("google", p.sub, p.email, p.name || "", flow.role, p.picture || null);
   if (u.status === "banned") return googleError("This account has been banned.");
+  if (u.status === "deactivated" || u.status === "deleted") return googleError("This account has been deactivated by an administrator.");
   const token = await startSession(u.id);
   return redirect("/sign-in?google=done", [
     authCookie(GOOGLE_FLOW_COOKIE, "", 0),
@@ -760,6 +766,13 @@ export default async (req: Request) => {
   try {
     // Administration, limits, notifications, reports, messages, integrity,
     // leaderboards, achievements and performance reports.
+    // Destructive admin operations (bulk question delete, account and class removal).
+    const adminOps = await handleAdminOps(req, parts, { json, requireUser });
+    if (adminOps) return adminOps;
+    // Class-based SAT Lessons: curricula, progress, mastery and private materials.
+    const learning = await handleLearning(req, parts, { json, requireUser });
+    if (learning) return learning;
+
     const platform = await handlePlatform(req, parts, { json, requireUser });
     if (platform) return platform;
 
@@ -835,6 +848,7 @@ export default async (req: Request) => {
         if (!u || !verifyPassword(password, u.passwordHash))
           return json({ error: "Incorrect login or password." }, 401);
         if (u.status === "banned") return json({ error: "This account has been banned." }, 403);
+        if (u.status === "deactivated" || u.status === "deleted") return json({ error: "This account has been deactivated by an administrator." }, 403);
         const token = await startSession(u.id);
         return json({ token, user: publicUser(u) });
       }
@@ -848,6 +862,7 @@ export default async (req: Request) => {
           credential, "https://www.googleapis.com/oauth2/v3/certs", GOOGLE_CLIENT_ID);
         const u = await oauthUpsert("google", p.sub, p.email ?? null, p.name || "", b.role, p.picture || null);
         if (u.status === "banned") return json({ error: "This account has been banned." }, 403);
+        if (u.status === "deactivated" || u.status === "deleted") return json({ error: "This account has been deactivated by an administrator." }, 403);
         const token = await startSession(u.id);
         return json({ token, user: publicUser(u) });
       }
@@ -861,6 +876,7 @@ export default async (req: Request) => {
         const name = typeof b.name === "string" ? b.name : "";
         const u = await oauthUpsert("apple", p.sub, p.email ?? null, name, b.role);
         if (u.status === "banned") return json({ error: "This account has been banned." }, 403);
+        if (u.status === "deactivated" || u.status === "deleted") return json({ error: "This account has been deactivated by an administrator." }, 403);
         const token = await startSession(u.id);
         return json({ token, user: publicUser(u) });
       }
@@ -874,6 +890,7 @@ export default async (req: Request) => {
         const displayName = String(identity.userMetadata?.full_name || identity.userMetadata?.name || "");
         const u = await oauthUpsert("netlify", identity.id, email, displayName, b.role);
         if (u.status === "banned") return json({ error: "This account has been banned." }, 403);
+        if (u.status === "deactivated" || u.status === "deleted") return json({ error: "This account has been deactivated by an administrator." }, 403);
         const token = await startSession(u.id);
         return json({ token, user: publicUser(u) });
       }
@@ -978,8 +995,8 @@ export default async (req: Request) => {
         if (auth.user!.role === "mentor" || auth.user!.role === "admin") {
           if (auth.user!.status !== "active") return json({ error: "Activate your mentor account first." }, 403);
           const owned = auth.user!.role === "admin"
-            ? await db.select().from(classes).orderBy(desc(classes.createdAt))
-            : await db.select().from(classes).where(eq(classes.mentorId, auth.user!.id)).orderBy(desc(classes.createdAt));
+            ? await db.select().from(classes).where(isNull(classes.deletedAt)).orderBy(desc(classes.createdAt))
+            : await db.select().from(classes).where(and(eq(classes.mentorId, auth.user!.id), isNull(classes.deletedAt))).orderBy(desc(classes.createdAt));
           const result = [];
           for (const classroom of owned) {
             const [mentor] = await db.select().from(users).where(eq(users.id, classroom.mentorId));
@@ -1002,7 +1019,7 @@ export default async (req: Request) => {
         const result = [];
         for (const enrollment of enrollments) {
           const [classroom] = await db.select().from(classes).where(eq(classes.id, enrollment.classId));
-          if (!classroom) continue;
+          if (!classroom || classroom.deletedAt) continue;
           const [mentor] = await db.select().from(users).where(eq(users.id, classroom.mentorId));
           result.push({ ...classroom, mentor: mentor ? publicUser(mentor) : null, joinedAt: enrollment.joinedAt });
         }
@@ -1030,6 +1047,8 @@ export default async (req: Request) => {
           eq(classInvites.codeHash, hash), sql`${classInvites.usedAt} is null`, sql`${classInvites.expiresAt} > now()`,
         )).limit(1);
         if (!invite) return json({ error: "That class code is invalid or has already been used." }, 400);
+        const [inviteClass] = await db.select({ deletedAt: classes.deletedAt }).from(classes).where(eq(classes.id, invite.classId));
+        if (!inviteClass || inviteClass.deletedAt) return json({ error: "That class has been closed." }, 400);
         const [existing] = await db.select().from(classEnrollments).where(and(
           eq(classEnrollments.classId, invite.classId), eq(classEnrollments.studentId, auth.user!.id),
         )).limit(1);
@@ -1049,7 +1068,7 @@ export default async (req: Request) => {
         if (auth.error) return auth.error;
         if (auth.user!.status !== "active") return json({ error: "Activate your mentor account first." }, 403);
         const classId = Number(id);
-        const [classroom] = await db.select().from(classes).where(and(eq(classes.id, classId), eq(classes.mentorId, auth.user!.id))).limit(1);
+        const [classroom] = await db.select().from(classes).where(and(eq(classes.id, classId), eq(classes.mentorId, auth.user!.id), isNull(classes.deletedAt))).limit(1);
         if (!classroom) return json({ error: "Class not found." }, 404);
         const code = newCode("CLASS");
         const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
@@ -1113,7 +1132,7 @@ export default async (req: Request) => {
         ));
         const dueAt = new Date(String(b.dueAt || ""));
         const [classroom] = await db.select().from(classes).where(
-          isAdmin ? eq(classes.id, classId) : and(eq(classes.id, classId), eq(classes.mentorId, auth.user!.id)),
+          isAdmin ? and(eq(classes.id, classId), isNull(classes.deletedAt)) : and(eq(classes.id, classId), eq(classes.mentorId, auth.user!.id), isNull(classes.deletedAt)),
         ).limit(1);
         if (!classroom) return json({ error: "Class not found." }, 404);
         if (!title) return json({ error: "Enter an assignment title." }, 400);
@@ -1121,8 +1140,12 @@ export default async (req: Request) => {
         if (Number.isNaN(dueAt.getTime())) return json({ error: "Choose a deadline." }, 400);
         // A new task must be due in the future; an edit may keep a past deadline.
         if (method === "POST" && dueAt <= new Date()) return json({ error: "Choose a future deadline." }, 400);
-        const found = await db.select({ id: questions.id }).from(questions).where(inArray(questions.id, questionIds));
+        const found = await db.select({ id: questions.id, scope: questions.scope }).from(questions).where(inArray(questions.id, questionIds));
         if (found.length !== questionIds.length) return json({ error: "One or more selected questions no longer exist." }, 400);
+        // Retired questions stay in the tasks that already hold them, but are never handed out again.
+        const kept = new Set(current?.questionIds ?? []);
+        if (found.some((q) => q.scope === RETIRED && !kept.has(q.id)))
+          return json({ error: "One or more selected questions were retired from the bank." }, 400);
         if (method === "PUT") {
           const [row] = await db.update(assignments)
             .set({ classId: classroom.id, title, description, questionIds, dueAt })
@@ -1647,6 +1670,7 @@ export default async (req: Request) => {
       const role = auth.user!.role;
       const canEdit = role === "admin" || role === "mentor";
       const lessonId = Number(id);
+      if (id && (!Number.isInteger(lessonId) || lessonId <= 0)) return json({ error: "Lesson not found." }, 404);
 
       // Comments hang off one lesson. Students post questions here; admins and
       // mentors answer them, optionally as a reply to a specific comment.
@@ -1655,6 +1679,7 @@ export default async (req: Request) => {
         if (!lesson) return json({ error: "Lesson not found." }, 404);
         if (role === "student" && lesson.status !== "published")
           return json({ error: "This lesson is not available yet." }, 404);
+        if (!(await canOpenLibraryLesson(auth.user!, lesson))) return json({ error: "This lesson is not available to you." }, 403);
         if (method === "GET") return json(await lessonCommentTree(lessonId));
         if (method === "POST") {
           const b = await req.json();
@@ -1679,6 +1704,8 @@ export default async (req: Request) => {
         if (!lesson) return json({ error: "Lesson not found." }, 404);
         if (role === "student" && lesson.status !== "published")
           return json({ error: "This lesson is not available yet." }, 404);
+        // Class lessons are private to the classes that use them.
+        if (!(await canOpenLibraryLesson(auth.user!, lesson))) return json({ error: "This lesson is not available to you." }, 403);
         return json(await lessonWithMeta(lesson, true));
       }
 
@@ -1686,7 +1713,8 @@ export default async (req: Request) => {
         const section = url.searchParams.get("section");
         const category = url.searchParams.get("category");
         const subcategory = url.searchParams.get("subcategory");
-        const conds = [];
+        // The open library lists public lessons only; class lessons live in their curricula.
+        const conds = [eq(lessons.visibility, "public"), isNull(lessons.archivedAt)];
         if (role === "student") conds.push(eq(lessons.status, "published"));
         if (section) conds.push(eq(lessons.section, section));
         if (category) conds.push(eq(lessons.category, category));
@@ -1726,6 +1754,7 @@ export default async (req: Request) => {
       if (method === "PUT" && id) {
         const [existing] = await db.select().from(lessons).where(eq(lessons.id, lessonId)).limit(1);
         if (!existing) return json({ error: "Lesson not found." }, 404);
+        if (existing.visibility !== "public") return json({ error: "Edit class lessons from the Lessons area, where the scope of the change is shown." }, 409);
         const b = await req.json();
         const title = String(b.title ?? "").trim();
         const videoId = youtubeVideoId(b.youtubeUrl ?? b.videoId);
@@ -1753,6 +1782,8 @@ export default async (req: Request) => {
         // A mentor may retire a lesson they published; admins may remove any.
         if (role === "mentor" && existing.createdBy !== auth.user!.id)
           return json({ error: "Only the mentor who published this lesson, or an admin, can delete it." }, 403);
+        const [placed] = await db.select({ id: learningPlacements.id }).from(learningPlacements).where(eq(learningPlacements.lessonId, lessonId)).limit(1);
+        if (placed) return json({ error: "This lesson is used in a class curriculum. Remove it from those units first." }, 409);
         await db.delete(lessonComments).where(eq(lessonComments.lessonId, lessonId));
         await db.delete(lessons).where(eq(lessons.id, lessonId));
         return json({ deleted: lessonId });
@@ -1792,7 +1823,7 @@ export default async (req: Request) => {
           classId: classes.id,
           className: classes.name,
           mentorId: classes.mentorId,
-        }).from(classEnrollments).innerJoin(classes, eq(classEnrollments.classId, classes.id)),
+        }).from(classEnrollments).innerJoin(classes, eq(classEnrollments.classId, classes.id)).where(isNull(classes.deletedAt)),
         db.select({
           student: attempts.student,
           section: attempts.section,
@@ -1994,16 +2025,11 @@ export default async (req: Request) => {
         const auth = await requireUser(req, ["admin"]);
         if (auth.error) return auth.error;
         const questionId = Number(id);
-        const taskRows = await db.select().from(assignments);
-        for (const task of taskRows) {
-          if (!task.questionIds.includes(questionId)) continue;
-          const remaining = task.questionIds.filter((item) => item !== questionId);
-          if (remaining.length) await db.update(assignments).set({ questionIds: remaining }).where(eq(assignments.id, task.id));
-          else await db.delete(assignments).where(eq(assignments.id, task.id));
-        }
-        await db.delete(savedQuestions).where(eq(savedQuestions.questionId, questionId));
-        await db.delete(questions).where(eq(questions.id, questionId));
-        return json({ deleted: questionId });
+        if (!Number.isInteger(questionId) || questionId <= 0) return json({ error: "Invalid question id." }, 400);
+        // Same rules as bulk deletion: unused questions are removed, referenced
+        // ones are retired so existing mocks, tasks and attempts keep their content.
+        const res = await deleteOneQuestion(questionId, auth.user!.id);
+        return json({ deleted: res.deleted.length ? questionId : null, retired: res.retired.length ? questionId : null, skipped: res.skipped, usage: res.usage });
       }
     }
 
@@ -2021,7 +2047,7 @@ export default async (req: Request) => {
         const [question] = await db.select().from(questions).where(eq(questions.id, Number(b.questionId))).limit(1);
         if (!question) return json({ error: "That question no longer exists." }, 404);
         // Review replays saved / missed questions, which may come from a test.
-        if (question.scope === TEST_EXCLUSIVE && !mode.startsWith("task:") && mode !== "review")
+        if ((question.scope === TEST_EXCLUSIVE || question.scope === RETIRED) && !mode.startsWith("task:") && mode !== "review")
           return json({ error: "That question is not part of practice." }, 403);
         if (mode.startsWith("task:")) {
           const assignmentId = Number(mode.slice(5));
@@ -2280,7 +2306,7 @@ export default async (req: Request) => {
     if (resource === "users" && !id && method === "GET") {
       const auth = await requireUser(req, ["admin"]);
       if (auth.error) return auth.error;
-      const rows = await db.select().from(users).orderBy(desc(users.createdAt));
+      const rows = await db.select().from(users).where(ne(users.status, "deleted")).orderBy(desc(users.createdAt));
       const agg = await db
         .select({
           student: attempts.student,
@@ -2329,33 +2355,13 @@ export default async (req: Request) => {
       return json({ error: "Unsupported user action." }, 400);
     }
 
+    // The old one-click hard delete is gone: removal now goes through
+    // POST /api/admin/users/:id/remove, which shows the impact first, protects
+    // the last admin, anonymises retained records and logs the outcome.
     if (resource === "users" && id && method === "DELETE") {
       const auth = await requireUser(req, ["admin"]);
       if (auth.error) return auth.error;
-      const userId = Number(id);
-      if (!Number.isInteger(userId)) return json({ error: "Invalid user id." }, 400);
-      if (userId === auth.user!.id) return json({ error: "You cannot delete your own admin account." }, 400);
-      const ownedClasses = await db.select().from(classes).where(eq(classes.mentorId, userId));
-      for (const classroom of ownedClasses) {
-        await db.delete(classInvites).where(eq(classInvites.classId, classroom.id));
-        await db.delete(classEnrollments).where(eq(classEnrollments.classId, classroom.id));
-        await db.delete(assignments).where(eq(assignments.classId, classroom.id));
-      }
-      await db.delete(classes).where(eq(classes.mentorId, userId));
-      await db.delete(classEnrollments).where(eq(classEnrollments.studentId, userId));
-      await db.delete(mentorActivationCodes).where(eq(mentorActivationCodes.mentorId, userId));
-      await db.delete(savedQuestions).where(eq(savedQuestions.studentId, userId));
-      await db.delete(sessions).where(eq(sessions.userId, userId));
-      await db.delete(attempts).where(eq(attempts.student, `u${userId}`));
-      await db.delete(notifications).where(eq(notifications.userId, userId));
-      await db.delete(messages).where(or(eq(messages.senderId, userId), eq(messages.recipientId, userId)));
-      await db.delete(badgeAwards).where(eq(badgeAwards.studentId, userId));
-      await db.delete(studentDailyActivity).where(eq(studentDailyActivity.studentId, userId));
-      await db.delete(usageLimits).where(and(eq(usageLimits.scope, "user"), eq(usageLimits.targetId, userId)));
-      await db.delete(questionReports).where(eq(questionReports.reporterId, userId));
-      await db.delete(users).where(eq(users.id, userId));
-      await db.insert(auditLog).values({ actorId: auth.user!.id, action: "user.delete", targetType: "user", targetId: String(userId) });
-      return json({ ok: true });
+      return json({ error: "Use the account removal dialog (POST /api/admin/users/:id/remove)." }, 410);
     }
 
     // ─────────────── PLATFORM STATS (admin) ───────────────

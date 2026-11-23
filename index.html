@@ -30,6 +30,7 @@
 <link rel="stylesheet" href="/vocab.css"/>
 <link rel="stylesheet" href="/fulltest.css"/>
 <link rel="stylesheet" href="/platform.css"/>
+<link rel="stylesheet" href="/learning.css"/>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root[data-theme="dark"]{
@@ -743,6 +744,8 @@ li[data-list="ordered"]{list-style-type:decimal}
 <!-- Question Bank domain / Challenging Questions JSON import and the Challenging Questions pages -->
 <script src="/collections.js"></script>
 <script src="/platform.js"></script>
+<script src="/admin-ops.js"></script>
+<script src="/learning.js"></script>
 <script>
 // ════════════════════════════════════════════════════════════
 //  Fast&Free SAT — single-page studio (vanilla JS)
@@ -2269,6 +2272,7 @@ const NAV = {
     {v:"challenge",label:"Challenging Questions",icon:"trophy"},
     {v:"rush",label:"Question Rush",icon:"rush"},
     {v:"tests",label:"Full-Length Tests",icon:"layers"},
+    {v:"learn",label:"Lessons",icon:"target"},
     {v:"lessons",label:"Online Lessons",icon:"book"},
     {v:"vocab",label:"SAT Vocabulary",icon:"vocab"},
     {v:"tasks",label:"My Tasks",icon:"pages"},
@@ -2295,6 +2299,7 @@ const NAV = {
     {v:"mentorbank",label:"All Questions",icon:"bank"},
     {v:"challengeadmin",label:"Challenging Questions",icon:"trophy"},
     {v:"vocab",label:"Vocabulary",icon:"vocab"},
+    {v:"learn",label:"Lessons & Mastery",icon:"target"},
     {v:"lessons",label:"Online Lessons",icon:"book"},
     {v:"settings",label:"Settings",icon:"settings"},
   ],
@@ -2305,6 +2310,7 @@ const NAV = {
     {v:"challengeadmin",label:"Challenging Questions",icon:"trophy"},
     {v:"tests",label:"Full-Length Tests",icon:"layers"},
     {v:"vocab",label:"Vocabulary",icon:"vocab"},
+    {v:"learn",label:"Lessons & Mastery",icon:"target"},
     {v:"lessons",label:"Online Lessons",icon:"book"},
     {v:"users",label:"User Management",icon:"users"},
     {v:"classesadmin",label:"Classes & Mentors",icon:"users"},
@@ -2367,6 +2373,8 @@ function closeNav(){ document.getElementById("shell")?.classList.remove("nav-ope
 function go(view, extra={}){
   if(view==="bank" && !("section" in extra)) extra={...extra,section:null,category:null,subcategory:null};
   if(view==="lessons" && !("lessonId" in extra)) extra={...extra,lessonId:null};
+  if(view==="learn" && !("learnLessonId" in extra)) extra={...extra,learnLessonId:null};
+  if(typeof lxStopPlayer==="function") lxStopPlayer();
   if(view!=="testsit") leaveTestSit();
   if(TQ) closeTestQuestionEditor();
   if(view!=="practice"&&view!=="rush"&&view!=="testsit"&&desmosFloatEl) desmosDestroy();
@@ -2392,7 +2400,7 @@ function routeView(){
     review:viewReview, assignments:viewAssignments, mentorbank:viewMentorBank, calc:viewCalc, profile:viewProfile,
     settings:viewSettings, about:viewAbout, dashboard:viewDashboard, manage:viewManage, pages:viewPages,
     users:viewUsers, branding:viewBranding, classes:viewClasses, allq:viewAllQuestions,
-    lessons:viewLessons, students:viewStudents,
+    lessons:viewLessons, students:viewStudents, learn:viewLearn,
     tests:viewTests, testedit:viewTestEdit, testreview:viewTestReview, testsit:viewTestSit, testpreview:viewTestPreview,
     vocab:viewVocab, vocabpractice:viewVocabPractice,
     challenge:viewChallenge, challengeadmin:viewChallengeAdmin,
@@ -2428,13 +2436,13 @@ function fullQuestionHTML(q,meta=""){
 
 async function viewStudentDashboard(){
   crumbs([{label:"Dashboard"}]); loading();
-  let activity={periods:{daily:{attempts:0,correct:0,accuracy:0},weekly:{attempts:0,correct:0,accuracy:0},total:{attempts:0,correct:0,accuracy:0}}}, tasks=[], usage={enrolled:false,used:0,limit:20,remaining:20}, openTests=[], vocabTasks=[], examTasks=[];
-  try{ [activity,tasks,usage,openTests,vocabTasks,examTasks]=await Promise.all([api("reviews"),api("assignments"),api("usage"),api("test-session").catch(()=>[]),api("vocab/tasks").catch(()=>[]),api("test-assignments").catch(()=>[])]); }catch{}
+  let activity={periods:{daily:{attempts:0,correct:0,accuracy:0},weekly:{attempts:0,correct:0,accuracy:0},total:{attempts:0,correct:0,accuracy:0}}}, tasks=[], usage={enrolled:false,used:0,limit:20,remaining:20}, openTests=[], vocabTasks=[], examTasks=[], learnOv=null;
+  try{ [activity,tasks,usage,openTests,vocabTasks,examTasks,learnOv]=await Promise.all([api("reviews"),api("assignments"),api("usage"),api("test-session").catch(()=>[]),api("vocab/tasks").catch(()=>[]),api("test-assignments").catch(()=>[]),api("learn/overview").catch(()=>null)]); }catch{}
   VB.tasks=vocabTasks||[];
   const open=tasks.filter(t=>t.completed<t.total).sort((a,b)=>new Date(a.dueAt)-new Date(b.dueAt));
   const next=open[0];
   $c().innerHTML=`<div class="page-head fade"><h1>Welcome back, ${esc(state.user.name)}</h1><p>Your deadlines, practice pace, and progress are together in one place.</p></div>
-    <div class="fade">${ftDashboardHTML(examTasks)}${vbDashboardHTML(vocabTasks)}<div class="stat-grid">${periodCard("Today",activity.periods.daily,"target")}${periodCard("This week",activity.periods.weekly,"layers")}${periodCard("All time",activity.periods.total,"trophy")}</div>
+    <div class="fade">${lxDashboardCardHTML(learnOv)}${ftDashboardHTML(examTasks)}${vbDashboardHTML(vocabTasks)}<div class="stat-grid">${periodCard("Today",activity.periods.daily,"target")}${periodCard("This week",activity.periods.weekly,"layers")}${periodCard("All time",activity.periods.total,"trophy")}</div>
     ${openTests.length?`<div class="panel"><h2>${svg("layers","ic-sm")} Tests in progress</h2>${openTests.map(t=>{
       const paused=t.status==="paused";
       return `<div style="display:flex;justify-content:space-between;gap:1rem;align-items:center;flex-wrap:wrap;margin-top:.7rem"><div><b>${esc(t.testTitle)}</b><div class="umeta">${t.timed===false?(paused?"Paused":"In progress"):paused?"Paused":"Clock running"} · Module ${t.moduleIndex+1}, question ${(t.currentQuestionIndex||0)+1} · ${t.timed===false?`Untimed${t.practiceScope==="modules"?" · selected modules":""}`:`${t.remainingTimeSeconds==null?"—":fmtTime(t.remainingTimeSeconds)} left`}</div></div><button class="btn btn-primary btn-sm" onclick="resumeTestFromCard(${t.testSessionId})">${svg(paused?"play":"clock","ic-sm")} Resume test</button></div>`;
@@ -2990,12 +2998,12 @@ function syncQuestionBrowsers(){
 // ════════════════════════════════════════════════════════════
 //  ADMIN · ALL QUESTIONS (browse, edit, build tests)
 // ════════════════════════════════════════════════════════════
-let AQ={rows:[],tests:[],modules:[],filter:blankQuestionFilter(),sel:new Set(),testId:null,moduleId:null,expanded:new Set()};
+let AQ={rows:[],tests:[],modules:[],filter:blankQuestionFilter(),sel:new Set(),testId:null,moduleId:null,expanded:new Set(),page:0,pageSize:25};
 async function viewAllQuestions(){
   crumbs([{label:"All Questions"}]); loading();
   let rows=[],testList=[];
   try{ [rows,testList]=await Promise.all([api("questions"),api("tests").catch(()=>[])]); }catch(e){ toast(e.message); }
-  AQ={rows,tests:testList,modules:[],filter:blankQuestionFilter(),sel:new Set(),testId:testList[0]?.id||null,moduleId:null,expanded:new Set()};
+  AQ={rows,tests:testList,modules:[],filter:blankQuestionFilter(),sel:new Set(),testId:testList[0]?.id||null,moduleId:null,expanded:new Set(),page:0,pageSize:25};
   M.list=rows; M.editing=null;
   renderAllQuestions();
   if(AQ.testId) await loadAQModules();
@@ -3005,8 +3013,6 @@ function renderAllQuestions(){
     <div class="panel fade"><h2>${svg("bank","ic-sm")} Filter the bank</h2>
       <div id="aqBar">${questionFilterBarHTML(AQ.filter,"AQ_setFilter")}</div>
       <div class="pickbar">
-        <button class="btn btn-ghost btn-sm" onclick="AQ_selectAll()">${svg("check","ic-sm")} Select all matches</button>
-        <button class="btn btn-ghost btn-sm" onclick="AQ_clear()">Clear selection</button>
         <button class="btn btn-ghost btn-sm" onclick="AQ_resetFilter()">Reset filters</button>
         <button class="btn btn-primary btn-sm" onclick="aqNewQuestion()">${svg("plus","ic-sm")} New question</button>
         ${bankImportButtonHTML("AQ.filter")}
@@ -3033,25 +3039,52 @@ function renderAllQuestions(){
       <button class="btn btn-ghost btn-sm" onclick="aqAddModule()">${svg("plus","ic-sm")} Add module</button></div>
     <div class="panel fade" id="aqEditor"><h2>${svg("edit","ic-sm")} Question editor</h2>
       <div id="mForm" style="margin-top:1rem"></div></div>
-    <div class="panel fade"><h2>${svg("pages","ic-sm")} Questions</h2><div id="aqList"></div></div>`;
+    <div class="panel fade"><h2>${svg("pages","ic-sm")} Questions</h2><div id="aqBulk"></div><div id="aqList"></div><div id="aqPager"></div></div>`;
   renderForm(null);
   renderAQList();
 }
 function AQ_setFilter(key,value){
+  // A new filter means a new set of matches: never carry a selection across it.
+  AQ.sel.clear(); AQ.page=0;
   if(applyFilterChange(AQ.filter,key,value)){
     const bar=document.getElementById("aqBar");
     if(bar) bar.innerHTML=questionFilterBarHTML(AQ.filter,"AQ_setFilter");
   }
   renderAQList();
 }
-function AQ_resetFilter(){ AQ.filter=blankQuestionFilter(); const bar=document.getElementById("aqBar"); if(bar) bar.innerHTML=questionFilterBarHTML(AQ.filter,"AQ_setFilter"); renderAQList(); }
-function AQ_toggle(id,on){ if(on) AQ.sel.add(id); else AQ.sel.delete(id); AQ_updateCount(); }
+function AQ_resetFilter(){ AQ.sel.clear(); AQ.page=0; AQ.filter=blankQuestionFilter(); const bar=document.getElementById("aqBar"); if(bar) bar.innerHTML=questionFilterBarHTML(AQ.filter,"AQ_setFilter"); renderAQList(); }
+function AQ_toggle(id,on){ if(on) AQ.sel.add(id); else AQ.sel.delete(id); AQ_renderBulk(); const all=document.getElementById("aqPageAll"); if(all){ const ids=AQ_pageIds(); all.checked=ids.length&&ids.every(i=>AQ.sel.has(i)); } }
 function AQ_clear(){ AQ.sel.clear(); renderAQList(); }
-function AQ_selectAll(){ filterQuestions(AQ.rows,AQ.filter).forEach(q=>AQ.sel.add(q.id)); renderAQList(); }
+function AQ_matches(){ return filterQuestions(AQ.rows,AQ.filter); }
+function AQ_pageIds(){ const list=AQ_matches(); return list.slice(AQ.page*AQ.pageSize,(AQ.page+1)*AQ.pageSize).map(q=>q.id); }
+function AQ_selectPage(on){ AQ_pageIds().forEach(id=>on?AQ.sel.add(id):AQ.sel.delete(id)); renderAQList(); }
+function AQ_selectAll(){ AQ_matches().forEach(q=>AQ.sel.add(q.id)); renderAQList(); }
+function AQ_goPage(n){ const pages=Math.max(1,Math.ceil(AQ_matches().length/AQ.pageSize)); AQ.page=Math.max(0,Math.min(pages-1,n)); renderAQList(); document.getElementById("aqBulk")?.scrollIntoView({block:"nearest"}); }
+// The selection bar always states exactly what is selected and where.
+function AQ_renderBulk(){
+  const el=document.getElementById("aqBulk"); if(!el) return;
+  const list=AQ_matches(), pageIds=AQ_pageIds(), n=AQ.sel.size, pages=Math.max(1,Math.ceil(list.length/AQ.pageSize));
+  const pageAll=pageIds.length&&pageIds.every(i=>AQ.sel.has(i));
+  const allSel=list.length&&n===list.length&&list.every(q=>AQ.sel.has(q.id));
+  let scope;
+  if(!n) scope=`No questions selected · ${list.length} match the filters`;
+  else if(allSel) scope=`All ${list.length} matching question${list.length===1?"":"s"} selected${pages>1?` across ${pages} pages`:""}`;
+  else if(pageAll&&n===pageIds.length) scope=`These ${n} question${n===1?"":"s"} on page ${AQ.page+1} selected`;
+  else scope=`${n} question${n===1?"":"s"} selected`;
+  el.innerHTML=`<div class="bulkbar ${n?"on":""}" role="status" aria-live="polite">
+    <b>${esc(scope)}</b>
+    <div class="bulk-actions">
+      ${pageIds.length&&!pageAll?`<button class="btn btn-ghost btn-sm" onclick="AQ_selectPage(true)">Select these ${pageIds.length} questions</button>`:""}
+      ${list.length>pageIds.length&&!allSel?`<button class="btn btn-ghost btn-sm" onclick="AQ_selectAll()">Select all ${list.length} matching questions</button>`:""}
+      ${n?`<button class="btn btn-ghost btn-sm" onclick="AQ_clear()">Clear selection</button>
+      <button class="btn btn-danger btn-sm" onclick="AO_deleteQuestions([...AQ.sel],'${allSel?`all ${list.length} matching questions`:`${n} selected question${n===1?"":"s"}`}')">${svg("trash","ic-sm")} Delete ${n} selected…</button>`:""}
+    </div></div>`;
+  AQ_updateCount();
+}
 function AQ_expand(id,on){ if(on) AQ.expanded.add(id); else AQ.expanded.delete(id); }
 function AQ_updateCount(){
   const el=document.getElementById("aqCount");
-  if(el) el.textContent=`${AQ.sel.size} selected · ${filterQuestions(AQ.rows,AQ.filter).length} of ${AQ.rows.length} questions match`;
+  if(el) el.textContent=`${AQ.sel.size} selected · ${AQ_matches().length} of ${AQ.rows.length} questions match`;
 }
 function aqModuleOptions(){
   if(!AQ.testId) return `<option value="">Pick a test first</option>`;
@@ -3108,11 +3141,16 @@ function renderAQList(){
   const el=document.getElementById("aqList"); if(!el) return;
   const list=filterQuestions(AQ.rows,AQ.filter);
   const inTest=testBankIds(AQ.modules);
+  const pager=document.getElementById("aqPager");
   if(!list.length){
     el.innerHTML=`<div class="empty" style="padding:1.6rem"><p>${AQ.rows.length?"No question matches these filters.":"The bank is empty — write the first question above."}</p></div>`;
-    AQ_updateCount(); return;
+    if(pager) pager.innerHTML=""; AQ_renderBulk(); return;
   }
-  el.innerHTML=list.slice(0,300).map(q=>{
+  const pages=Math.max(1,Math.ceil(list.length/AQ.pageSize));
+  if(AQ.page>=pages) AQ.page=pages-1;
+  const slice=list.slice(AQ.page*AQ.pageSize,(AQ.page+1)*AQ.pageSize);
+  const pageAll=slice.every(q=>AQ.sel.has(q.id));
+  el.innerHTML=`<label class="bulk-pagehead"><input type="checkbox" id="aqPageAll" ${pageAll?"checked":""} onchange="AQ_selectPage(this.checked)"/> Select this page (${slice.length})</label>`+slice.map(q=>{
     const [dl,dc]=DIFF[q.difficulty]||DIFF[3];
     return `<div class="qrow">
       <div class="qrow-head">
@@ -3129,8 +3167,11 @@ function renderAQList(){
         ${fullQuestionHTML(q,`Question #${q.id}`)}
       </details></div>`;
   }).join("");
-  if(list.length>300) el.innerHTML+=`<p class="umeta" style="margin-top:.8rem">Showing the first 300 of ${list.length} matches — narrow the filters to see the rest.</p>`;
-  AQ_updateCount();
+  if(pager) pager.innerHTML=pages>1?`<nav class="pager" aria-label="Question pages">
+    <button class="btn btn-ghost btn-sm" ${AQ.page===0?"disabled":""} onclick="AQ_goPage(${AQ.page-1})">${svg("back","ic-sm")} Previous</button>
+    <span class="umeta">Page ${AQ.page+1} of ${pages} · ${AQ.page*AQ.pageSize+1}–${Math.min(list.length,(AQ.page+1)*AQ.pageSize)} of ${list.length}</span>
+    <button class="btn btn-ghost btn-sm" ${AQ.page>=pages-1?"disabled":""} onclick="AQ_goPage(${AQ.page+1})">Next ${svg("arr","ic-sm")}</button></nav>`:"";
+  AQ_renderBulk();
   typesetMath(el);
 }
 function aqNewQuestion(){
@@ -5396,11 +5437,9 @@ async function flushPendingMedia(){
   }
   return true;
 }
-async function deleteQuestion(id){
-  if(!confirm("Delete this question permanently?")) return;
-  try{ await api("questions/"+id,{method:"DELETE"}); statsCache=null; M.editing=null; await loadManage(); syncQuestionBrowsers(); renderForm(null); toast("Question deleted"); }
-  catch(e){ toast("Delete failed: "+e.message); }
-}
+// Single deletes use the same preview → confirm → delete-or-retire flow as bulk ones.
+function deleteQuestion(id){ AO_deleteQuestions([id],`question #${id}`); }
+async function afterQuestionDeletion(){ statsCache=null; M.editing=null; await loadManage(); AQ.sel.clear(); syncQuestionBrowsers(); renderForm(null); }
 
 // ════════════════════════════════════════════════════════════
 //  ADMIN · PAGES (full create / edit / delete)
@@ -5614,12 +5653,15 @@ async function viewUsers(){
     const login=u.email||u.username||u.phone||"—";
     let joined="—"; try{ if(u.createdAt) joined=new Date(u.createdAt).toLocaleDateString(); }catch{}
     const status=u.status||"active";
-    const actions=u.role==="admin"?`<span class="umeta">Protected</span>`:`<div style="display:flex;gap:.35rem;flex-wrap:wrap">
+    const self=u.id===state.user.profile?.id;
+    const actions=self?`<span class="umeta">Your account</span>`:u.role==="admin"?`<div style="display:flex;gap:.35rem;flex-wrap:wrap"><button class="btn btn-danger btn-sm" onclick="AO_removeUser(${u.id})">${svg("trash","ic-sm")} Remove admin…</button></div>`:status==="deactivated"?`<div style="display:flex;gap:.35rem;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm" onclick="AO_reactivate(${u.id})">Reactivate</button>
+      <button class="btn btn-danger btn-sm" onclick="AO_removeUser(${u.id})">${svg("trash","ic-sm")} Delete permanently…</button></div>`:`<div style="display:flex;gap:.35rem;flex-wrap:wrap">
       ${u.role==="mentor"&&status==="pending"?`<button class="btn btn-primary btn-sm" onclick="createMentorCode(${u.id},'${esc(u.displayName).replace(/'/g,"&#39;")}')">Approve</button>`:""}
       <button class="btn btn-ghost btn-sm" onclick="PL_resetPassword(${u.id},'${esc(u.displayName).replace(/'/g,"&#39;")}')">${svg("lock","ic-sm")} Reset password</button>
       ${u.role==="student"?`<button class="btn btn-ghost btn-sm" onclick="PL_userLimits(${u.id},'${esc(u.displayName).replace(/'/g,"&#39;")}')">Limits</button>`:""}
       <button class="btn ${status==="banned"?"btn-ghost":"btn-danger"} btn-sm" onclick="setUserBan(${u.id},${status!=="banned"})">${status==="banned"?"Unban":"Ban"}</button>
-      <button class="btn btn-danger btn-sm" onclick="deleteUserAccount(${u.id},'${esc(u.displayName).replace(/'/g,"&#39;")}')">Delete</button></div>`;
+      <button class="btn btn-danger btn-sm" onclick="AO_removeUser(${u.id})">${svg("trash","ic-sm")} ${u.role==="mentor"?"Remove mentor…":"Remove student…"}</button></div>`;
     return `<tr>
       <td><div class="uname">${esc(u.displayName||"Student")}</div><div class="umeta">${esc(login)}</div></td>
       <td><span class="prov-tag">${esc(u.role||"student")}</span></td>
@@ -5662,11 +5704,7 @@ async function setUserBan(userId,ban){
   try{ await api("users/"+userId,{method:"PATCH",body:JSON.stringify({action:ban?"ban":"unban"})}); toast(ban?"User banned":"User restored"); go("users"); }
   catch(e){ toast(e.message); }
 }
-async function deleteUserAccount(userId,name){
-  if(!confirm(`Permanently delete ${name} and their account data?`)) return;
-  try{ await api("users/"+userId,{method:"DELETE"}); toast("User deleted"); go("users"); }
-  catch(e){ toast(e.message); }
-}
+function deleteUserAccount(userId){ AO_removeUser(userId); }
 
 // ════════════════════════════════════════════════════════════
 //  ADMIN · BRANDING (name, description, logo, thumbnail)
