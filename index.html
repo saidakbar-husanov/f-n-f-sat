@@ -3463,7 +3463,7 @@ function renderQuestion(restore=false){
     </div>
   </div>`;
   if(restore){
-    if(P.answered&&P.result) paintPracticeResult(q,P.result.selected,P.result.correct);
+    if(P.answered&&P.result) paintPracticeResult(q,P.result);
     else if(P.sel&&q.type==="spr"){ const inp=document.getElementById("sprIn"); inp.value=P.sel; document.getElementById("checkBtn").disabled=!P.sel.trim(); }
     else if(P.sel){ const l=P.sel; P.sel=null; pickChoice(l); }
   }
@@ -3487,33 +3487,55 @@ function pickChoice(l){
   document.getElementById("checkBtn").disabled=false;
   savePracticeProgress();
 }
+// Students never receive the answer key before answering: the server grades
+// the attempt and returns the correct answer and explanation with the result.
 async function checkAnswer(){
-  if(P.answered) return;
+  if(!P||P.answered||P.checking) return;
   const q=P.list[P.idx];
-  let selected,correct;
+  let selected;
   if(q.type==="spr"){
     selected=(document.getElementById("sprIn").value||"").trim();
     if(!selected) return;
-    correct=sprMatches(selected,q.answer);
   } else {
     if(!P.sel) return;
-    selected=P.sel; correct=selected===q.answer;
+    selected=P.sel;
   }
-  P.answered=true; P.sel=selected; P.result={selected,correct}; if(correct)P.correct++;
-  paintPracticeResult(q,selected,correct);
+  const btn=document.getElementById("checkBtn"), btnLabel=btn.innerHTML;
+  const lockInputs=on=>{
+    const inp=document.getElementById("sprIn"); if(inp) inp.disabled=on;
+    document.querySelectorAll("#answerArea .choice").forEach(c=>c.disabled=on);
+  };
+  P.checking=true; btn.disabled=true; btn.textContent="Checking…"; lockInputs(true);
+  let graded=null, error=null;
+  try{ graded=await gradeAnswer(q,selected,P.mode); }catch(e){ error=e; }
+  P.checking=false;
+  // The student moved on (or left practice) while the request was in flight.
+  if(state.view!=="practice"||!P||P.list[P.idx]!==q||P.answered) return;
+  if(!graded){
+    // Leave the question unanswered so it can be checked again.
+    toast(error?.message||"Could not check your answer. Try again.");
+    lockInputs(false); btn.innerHTML=btnLabel; btn.disabled=false;
+    return;
+  }
+  const result={selected,...graded};
+  P.answered=true; P.sel=selected; P.result=result; if(result.correct)P.correct++;
+  paintPracticeResult(q,result);
   savePracticeProgress();
-  await recordAttempt(q,selected,correct,P.mode);
 }
 // Show the graded state of the current question — after checking it, or when
-// a restored session lands on a question that was already answered.
-function paintPracticeResult(q,selected,correct){
+// a restored session lands on a question that was already answered. The key
+// comes from the stored result (sessions saved before the key was stripped
+// from the question list fall back to the question itself).
+function paintPracticeResult(q,result){
+  const {selected,correct}=result;
+  const answer=result.answer??q.answer, explanation=result.explanation??q.explanation;
   if(q.type==="spr"){
     const inp=document.getElementById("sprIn"); inp.value=selected; inp.disabled=true;
     inp.style.borderColor=correct?"var(--mint)":"var(--red)";
   } else {
     document.querySelectorAll(".choice").forEach(c=>{
       c.disabled=true;
-      if(c.dataset.l===q.answer) c.classList.add("right");
+      if(c.dataset.l===answer) c.classList.add("right");
       else if(c.dataset.l===selected) c.classList.add("wrong");
       c.classList.remove("sel");
     });
@@ -3521,8 +3543,8 @@ function paintPracticeResult(q,selected,correct){
   document.getElementById("fbTag").className="feedback-tag "+(correct?"ok":"no");
   document.getElementById("fbTag").innerHTML=(correct?svg("check","ic-sm")+"Correct":svg("x","ic-sm")+"Not quite");
   document.getElementById("explainArea").innerHTML=`<div class="explain ${correct?"":"bad"}">
-    <h4>${correct?"Why this works":"Correct answer: "+mathText(q.answer)}</h4>
-    <p>${mathText(q.explanation||"—")}</p></div>`;
+    <h4>${correct?"Why this works":"Correct answer: "+mathText(answer??"")}</h4>
+    <p>${mathText(explanation||"—")}</p></div>`;
   document.getElementById("checkBtn").style.display="none";
   document.getElementById("nextBtn").style.display="inline-flex";
 }
@@ -3553,11 +3575,21 @@ function finishPractice(){
       </div>
     </div></div>`;
 }
-async function recordAttempt(q,selected,correct,mode){
+// Records and grades one answer on the server. The response carries the
+// server's verdict plus the question's answer, acceptableAnswers and
+// explanation. Throws on a network / API error so the caller can retry.
+async function recordAttempt(q,selected,mode){
   return api("attempts",{method:"POST",body:JSON.stringify({
-    student:state.user.key||state.user.name, questionId:q.id, section:q.section, category:q.category,
-    difficulty:q.difficulty, selected:String(selected), correct, mode
-  })}).catch(e=>{ toast(e.message); return null; });
+    questionId:q.id, selected:String(selected), mode
+  })});
+}
+// Grade one answer: students through the server (recordAttempt); staff, who
+// already hold the key and cannot record attempts, are graded locally.
+async function gradeAnswer(q,selected,mode){
+  if(state.user?.role!=="student"&&q.answer!==undefined)
+    return {correct:q.type==="spr"?sprMatches(selected,q.answer):selected===q.answer,answer:q.answer,explanation:q.explanation||""};
+  const row=await recordAttempt(q,selected,mode);
+  return {correct:!!row?.correct,answer:row?.answer??null,explanation:row?.explanation||""};
 }
 
 // ════════════════════════════════════════════════════════════
@@ -3592,7 +3624,7 @@ async function beginRush(){
   if(!usage.enrolled&&usage.remaining<=0){ toast("Daily 20-question limit reached. Join a class for unlimited practice."); go("home"); return; }
   if(!usage.enrolled) list=list.slice(0,usage.remaining);
   if(!list.length){ $c().innerHTML=`<div class="empty fade"><div class="ei">${svg("flame")}</div><p>No questions available to rush yet.</p><button class="btn btn-ghost" onclick="go('rush')">${svg("back","ic-sm")} Back</button></div>`; return; }
-  R={...R,active:true,list:list.sort(()=>Math.random()-0.5),idx:0,score:0,streak:0,best:0,answered:0,timeLeft:R.dur};
+  R={...R,active:true,pending:false,list:list.sort(()=>Math.random()-0.5),idx:0,score:0,streak:0,best:0,answered:0,timeLeft:R.dur};
   R.timer=setInterval(()=>{ R.timeLeft--; updateRushTimer(); if(R.timeLeft<=0) endRush(); },1000);
   renderRushQ();
 }
@@ -3627,18 +3659,33 @@ function renderRushQ(){
   if(q.type==="spr") setTimeout(()=>document.getElementById("rsprIn")?.focus(),30);
 }
 function updateRushTimer(){ const t=document.getElementById("rushTimer"); if(t){ t.textContent=fmtTime(R.timeLeft); t.classList.toggle("low",R.timeLeft<=10);} }
-function rushAnswer(val){
-  if(!R.active) return;
+async function rushAnswer(val){
+  if(!R.active||R.pending) return;
   const q=R.list[R.idx];
   const sel=String(val).trim();
-  const correct=q.type==="spr"? sprMatches(sel,q.answer) : sel===q.answer;
+  const lockInputs=on=>{
+    document.querySelectorAll(".choice").forEach(c=>c.disabled=on);
+    const inp=document.getElementById("rsprIn"); if(inp) inp.disabled=on;
+  };
+  R.pending=true; lockInputs(true);
+  let graded=null, error=null;
+  try{ graded=await gradeAnswer(q,sel,"rush"); }catch(e){ error=e; }
+  R.pending=false;
+  if(!R.active||R.list[R.idx]!==q) return;
+  if(!graded){
+    // Not counted: the same question stays up so it can be answered again.
+    toast(error?.message||"Could not check your answer. Try again.");
+    lockInputs(false);
+    if(q.type==="spr") document.getElementById("rsprIn")?.focus();
+    return;
+  }
+  const correct=graded.correct;
   R.answered++;
   if(correct){ R.score++; R.streak++; R.best=Math.max(R.best,R.streak);} else { R.streak=0; }
-  recordAttempt(q,sel,correct,"rush");
   // brief visual feedback
   if(q.type!=="spr"){
     document.querySelectorAll(".choice").forEach(c=>{ c.disabled=true;
-      if(c.dataset.l===q.answer)c.classList.add("right"); else if(c.dataset.l===sel)c.classList.add("wrong"); });
+      if(c.dataset.l===graded.answer)c.classList.add("right"); else if(c.dataset.l===sel)c.classList.add("wrong"); });
   } else {
     const inp=document.getElementById("rsprIn"); if(inp){inp.disabled=true; inp.style.borderColor=correct?"var(--mint)":"var(--red)";}
   }
