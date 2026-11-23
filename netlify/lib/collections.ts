@@ -539,6 +539,10 @@ export async function handleCollections(req: Request, parts: string[], deps: Ful
       const auth = await requireUser(req);
       if (auth.error) return auth.error;
       const qs = await db.select().from(questions).where(and(eq(questions.scope, CHALLENGE), eq(questions.challengeSetId, setId))).orderBy(questions.setPosition, questions.id);
+      // Students get the questions without the key; POST /api/attempts
+      // grades each answer and returns the key and explanation afterwards.
+      if (auth.user!.role === "student")
+        return json({ set, questions: qs.map(({ answer, acceptableAnswers, explanation, ...rest }) => rest) });
       return json({ set, questions: qs });
     }
     if (method === "DELETE") {

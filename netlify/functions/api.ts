@@ -41,7 +41,14 @@ const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
 // Optional override; by default the callback is <site origin>/api/auth/google/callback.
 const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || "";
 const APPLE_CLIENT_ID = process.env.APPLE_CLIENT_ID || "";
-const ADMIN_PASSCODE = process.env.ADMIN_PASSCODE || "HSM5948@";
+// No built-in fallback: admin sign-in stays disabled until ADMIN_PASSCODE is set.
+const ADMIN_PASSCODE = process.env.ADMIN_PASSCODE || "";
+// Admin sign-in lockout: this many failures inside the window locks the
+// passcode form for ADMIN_LOCKOUT_MS. The counter lives in the settings table.
+const ADMIN_LOGIN_FAILURES_KEY = "admin-login-failures";
+const ADMIN_MAX_FAILURES = 10;
+const ADMIN_FAILURE_WINDOW_MS = 15 * 60 * 1000;
+const ADMIN_LOCKOUT_MS = 15 * 60 * 1000;
 
 // Password storage (scrypt, per-user salt) lives in lib/passwords.
 const newToken = () => randomBytes(32).toString("hex");
@@ -872,12 +879,29 @@ export default async (req: Request) => {
       }
 
       if (id === "admin-login" && method === "POST") {
-        const b = await req.json();
+        // Never compare against an empty passcode: two empty buffers are equal.
+        if (!ADMIN_PASSCODE) return json({ error: "Admin sign-in is not configured." }, 503);
+        const now = Date.now();
+        const failures = await readSetting(ADMIN_LOGIN_FAILURES_KEY, { count: 0, firstAt: 0, lockedUntil: 0 });
+        if (failures.lockedUntil > now) {
+          const minutes = Math.ceil((failures.lockedUntil - now) / 60000);
+          return json({ error: `Too many failed attempts. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.` }, 429);
+        }
+        const b = await req.json().catch(() => ({}));
         const passcode = String(b.passcode || "");
         const supplied = Buffer.from(passcode);
         const expected = Buffer.from(ADMIN_PASSCODE);
-        if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected))
+        if (!passcode || supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+          const fresh = !failures.firstAt || now - failures.firstAt > ADMIN_FAILURE_WINDOW_MS;
+          const count = (fresh ? 0 : failures.count) + 1;
+          const lockedUntil = count >= ADMIN_MAX_FAILURES ? now + ADMIN_LOCKOUT_MS : 0;
+          await writeSetting(ADMIN_LOGIN_FAILURES_KEY, {
+            count: lockedUntil ? 0 : count, firstAt: lockedUntil ? 0 : fresh ? now : failures.firstAt, lockedUntil,
+          });
+          if (lockedUntil) return json({ error: "Too many failed attempts. Try again in 15 minutes." }, 429);
           return json({ error: "Incorrect studio passcode." }, 401);
+        }
+        if (failures.count || failures.lockedUntil) await writeSetting(ADMIN_LOGIN_FAILURES_KEY, { count: 0, firstAt: 0, lockedUntil: 0 });
         let [u] = await db.select().from(users).where(eq(users.username, "studio-admin"));
         if (!u) {
           [u] = await db.insert(users).values({
@@ -1153,7 +1177,7 @@ export default async (req: Request) => {
               eq(attempts.student, `u${auth.user!.id}`), eq(attempts.mode, `task:${assignment.id}`),
             ));
             const completedIds = Array.from(new Set(taskAttempts.map((row) => row.questionId)));
-            result.push({ ...assignment, classroom, questions: taskQuestions, completedIds, completed: completedIds.length, total: assignment.questionIds.length });
+            result.push({ ...assignment, classroom, questions: taskQuestions.map(withoutKey), completedIds, completed: completedIds.length, total: assignment.questionIds.length });
           } else {
             const enrollments = await db.select().from(classEnrollments).where(and(
               eq(classEnrollments.classId, assignment.classId), eq(classEnrollments.status, "active"),
@@ -1898,6 +1922,10 @@ export default async (req: Request) => {
       // GET /api/questions (alias /api/questions/bank) is the general bank:
       // test-exclusive questions never appear in practice or the pickers.
       if (method === "GET" && (!id || id === "bank")) {
+        // Signed-in users only; students never receive the answer key here —
+        // POST /api/attempts grades on the server and returns it after answering.
+        const auth = await requireUser(req);
+        if (auth.error) return auth.error;
         const section = url.searchParams.get("section");
         const category = url.searchParams.get("category");
         const subcategory = url.searchParams.get("subcategory");
@@ -1910,7 +1938,7 @@ export default async (req: Request) => {
           .from(questions)
           .where(and(...conds))
           .orderBy(desc(questions.createdAt));
-        return json(rows);
+        return json(auth.user!.role === "student" ? rows.map(withoutKey) : rows);
       }
 
       if (method === "POST") {
@@ -2023,7 +2051,13 @@ export default async (req: Request) => {
           })
           .returning();
         await evaluateBadges(auth.user!.id);
-        return json(row, 201);
+        // The key is revealed only once the question has been answered.
+        return json({
+          ...row,
+          answer: question.answer,
+          acceptableAnswers: Array.isArray(question.acceptableAnswers) ? question.acceptableAnswers : [],
+          explanation: question.explanation ?? "",
+        }, 201);
       }
       if (method === "GET") {
         const auth = await requireUser(req, ["student", "mentor", "admin"]);

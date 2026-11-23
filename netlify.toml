@@ -2,6 +2,21 @@
   directory = "netlify/functions"
   node_bundler = "esbuild"
 
+# The site publishes the repository root, so keep server source out of reach.
+# These must come before the SPA fallback below. /docs/* stays public — the
+# import pages link to the templates and guides there.
+[[redirects]]
+  from = "/netlify/*"
+  to = "/index.html"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/db/*"
+  to = "/index.html"
+  status = 404
+  force = true
+
 # Single-page app: serve index.html for client-side routes such as /admin.
 # The /api/* function (declared via its own path config) takes precedence, so
 # this fallback only catches navigations the SPA itself handles.
