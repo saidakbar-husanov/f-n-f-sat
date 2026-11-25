@@ -17,6 +17,7 @@
 // Re-importing is idempotent: questions are matched by their stable `id`
 // within the destination collection only, so an unrelated collection that
 // happens to use the same id is never touched.
+import { accessFor, allows, allowedSubjects } from "./access.js";
 import { and, eq, inArray, sql } from "drizzle-orm";
 const pick = (o: any, ...keys: string[]) => { for (const k of keys) if (o && o[k] !== undefined && o[k] !== null && o[k] !== "") return o[k]; return undefined; };
 import { createHash } from "node:crypto";
@@ -529,7 +530,9 @@ export async function handleCollections(req: Request, parts: string[], deps: Ful
       const counts = await db.select({ setId: questions.challengeSetId, n: sql<number>`count(*)::int` }).from(questions)
         .where(eq(questions.scope, CHALLENGE)).groupBy(questions.challengeSetId);
       const bySet = new Map(counts.map((c) => [c.setId, Number(c.n)]));
-      return json(rows.map((r) => ({ ...r, questionCount: bySet.get(r.id) ?? 0 })));
+      // Students only see sets of subjects whose Challenging Questions are open.
+      const open = auth.user!.role === "student" ? allowedSubjects((await accessFor(req, auth.user!)).rules, "challenge") : null;
+      return json(rows.filter((r) => !open || open.includes(r.section)).map((r) => ({ ...r, questionCount: bySet.get(r.id) ?? 0 })));
     }
     const setId = Number(id);
     if (!Number.isInteger(setId)) return json({ error: "Set not found." }, 404);
@@ -538,6 +541,8 @@ export async function handleCollections(req: Request, parts: string[], deps: Ful
     if (method === "GET") {
       const auth = await requireUser(req);
       if (auth.error) return auth.error;
+      if (auth.user!.role === "student" && !allows((await accessFor(req, auth.user!)).rules, set.section, "challenge"))
+        return json({ error: "Challenging Questions for this subject are not available on your account.", locked: true }, 403);
       const qs = await db.select().from(questions).where(and(eq(questions.scope, CHALLENGE), eq(questions.challengeSetId, setId))).orderBy(questions.setPosition, questions.id);
       // Students get the questions without the key; POST /api/attempts
       // grades each answer and returns the key and explanation afterwards.

@@ -12,6 +12,12 @@
   force = true
 
 [[redirects]]
+  from = "/tests/*"
+  to = "/index.html"
+  status = 404
+  force = true
+
+[[redirects]]
   from = "/db/*"
   to = "/index.html"
   status = 404

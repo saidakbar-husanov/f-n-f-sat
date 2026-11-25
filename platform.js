@@ -24,7 +24,7 @@ function plBellHTML(){
   return `<button type="button" class="pl-bell" id="plBell" onclick="PL_openNotifications()" aria-label="Notifications${n?`, ${n} unread`:""}">${svg("info","ic-sm")}<span>Alerts</span>${n?`<b class="pl-count">${n>99?"99+":n}</b>`:""}</button>`;
 }
 function plNavCount(v){
-  const n=v==="messages"?PL.inbox.messages:v==="qreports"?PL.inbox.reports:0;
+  const n=v==="messages"?PL.inbox.messages:v==="qreports"?PL.inbox.reports:v==="announcements"?PL.inbox.announcements:0;
   return n?`<b class="pl-count">${n>99?"99+":n}</b>`:"";
 }
 async function plRefreshInbox(){
@@ -57,6 +57,7 @@ async function PL_openNotification(id,link){
   if(link.with) extra.chatWith=Number(link.with);
   if(link.reportId) extra.reportId=Number(link.reportId);
   if(link.attemptId) extra.integrityAttempt=Number(link.attemptId);
+  if(link.view==="announcements") extra.announcementId=link.announcementId?Number(link.announcementId):null;
   go(link.view,extra);
 }
 
@@ -180,27 +181,7 @@ async function PL_send(){
 }
 
 // ──────────────── leaderboards ────────────────
-const PL_LB={category:"points",period:"weekly",classId:""};
-async function viewLeaderboards(){
-  crumbs([{label:"Leaderboards"}]); loading();
-  let d; try{ d=await api(`leaderboards?category=${PL_LB.category}&period=${PL_LB.period}${PL_LB.classId?`&classId=${PL_LB.classId}`:""}`); }catch(e){ $c().innerHTML=`<div class="empty"><p>${esc(e.message)}</p></div>`; return; }
-  const seg=(key,opts)=>`<div class="vb-seg">${opts.map(([k,l])=>`<button class="${PL_LB[key]===k?"on":""}" onclick="PL_LB.${key}='${k}';viewLeaderboards()">${l}</button>`).join("")}</div>`;
-  const unit=d.category==="points"?"points":d.category==="accuracy"?"%":"days";
-  const me=state.user.profile?.id;
-  const rows=d.rows.map(r=>`<tr class="${r.studentId===me?"pl-me":""}"><td class="ft-num">${r.rank<=3?`<span class="pl-medal m${r.rank}">${r.rank}</span>`:r.rank}</td><td><b>${esc(r.displayName)}</b>${r.studentId===me?` <span class="pill pill-sec">You</span>`:""}</td>
-    <td class="ft-n"><b>${r.value}</b> ${unit}${d.category==="accuracy"?`<div class="umeta">${r.extra.correct}/${r.extra.answered}</div>`:d.category==="streak"?`<div class="umeta">best ${r.extra.longest}</div>`:`<div class="umeta">${r.extra.questionPoints} q · ${r.extra.qualifyingDays} days · ${r.extra.mocks} mocks</div>`}</td>
-    <td>${(r.badges||[]).slice(0,6).map(k=>`<span class="pl-badge-mini" title="${esc(k.replace(/_/g," "))}">${svg("trophy","ic-sm")}</span>`).join("")}${r.badges?.length>6?`<span class="umeta">+${r.badges.length-6}</span>`:""}</td></tr>`).join("");
-  const help={points:"Easy correct 1 · Medium 2 · Hard 3 (first answer to each question in the period) · 5 per qualifying day · 20 per completed full-length mock.",
-    accuracy:`First answer to each question in the period; at least ${d.minAccuracyQuestions} questions to appear. Ties: more correct answers, then more questions.`,
-    streak:"Consecutive qualifying days (10 practice questions or one finished mock-test module). Ranked by the current streak."}[d.category];
-  $c().innerHTML=`<div class="page-head fade"><h1>Leaderboards</h1><p>Championships are calculated on the server from verified answers. Only display names are shown.</p></div>
-    <div class="panel fade"><div class="pl-lb-filters">${seg("category",[["points","Points"],["accuracy","Accuracy"],["streak","Streak"]])}
-      ${d.category==="streak"?"":seg("period",[["daily","Today"],["weekly","This week"],["monthly","This month"],["all","All time"]])}
-      <select onchange="PL_LB.classId=this.value;viewLeaderboards()"><option value="">Platform-wide</option>${d.classes.map(c=>`<option value="${c.id}" ${String(PL_LB.classId)===String(c.id)?"selected":""}>${esc(c.name)}</option>`).join("")}</select></div>
-      <p class="umeta" style="margin:.6rem 0">${esc(help)} Days follow the ${esc(d.timezone)} calendar.</p>
-      ${d.me?`<p><b>Your rank: ${d.me.rank}</b> · ${d.me.value} ${unit}</p>`:""}
-      ${rows?`<div class="ft-table-wrap"><table class="ft-table"><thead><tr><th>#</th><th>Student</th><th class="ft-n">Score</th><th>Badges</th></tr></thead><tbody>${rows}</tbody></table></div>`:`<div class="empty" style="padding:1.5rem"><p>No ranked students yet for this view.</p></div>`}</div>`;
-}
+// Leaderboards live in features.js (usernames, privacy, search, export).
 
 // ──────────────── achievements ────────────────
 async function viewAchievements(){
@@ -428,7 +409,8 @@ async function viewLimits(){
   crumbs([{label:"Limits Management"}]); loading();
   let d,users=[]; try{ [d,users]=await Promise.all([api("admin/limits"),api("users")]); }catch(e){ $c().innerHTML=`<div class="empty"><p>${esc(e.message)}</p></div>`; return; }
   const students=users.filter(u=>u.role==="student");
-  $c().innerHTML=`<div class="page-head fade"><h1>Limits Management</h1><p>Precedence: user override → class limit → platform default. Enter a number, <b>unlimited</b>, or leave blank to inherit. Limits are enforced on the server; changing them never alters past activity.</p></div>
+  $c().innerHTML=`<div class="page-head fade"><h1>Limits &amp; Access</h1><p>Precedence: user override → class limit → platform default. Enter a number, <b>unlimited</b>, or leave blank to inherit. Limits are enforced on the server; changing them never alters past activity.</p></div>
+    <div id="fxAccess"><div class="panel"><div class="spin"></div></div></div>
     <div class="panel fade"><h2>${svg("settings","ic-sm")} Platform defaults</h2>
       <h4>Students not in a class</h4>${plLimitInputs("pi_",d.platform.independent,false)}
       <h4 style="margin-top:.8rem">Class members</h4>${plLimitInputs("pm_",d.platform.member,false)}
@@ -439,7 +421,8 @@ async function viewLimits(){
     <div class="panel fade"><h2>${svg("profile","ic-sm")} User overrides</h2>
       ${d.users.length?`<table class="mini-table"><thead><tr><th>Student</th><th>Overrides</th><th></th></tr></thead><tbody>${d.users.map(u=>`<tr><td>${esc(u.displayName)}</td><td class="umeta">${Object.entries(u.limits).map(([k,v])=>`${esc(PL_LIMIT_LABEL[k]||k)}: ${v===-1?"unlimited":v}`).join(" · ")}</td><td><button class="btn btn-ghost btn-xs" onclick="PL_userLimits(${u.id},${plJs(u.displayName)})">Edit</button> <button class="btn btn-ghost btn-xs" onclick="PL_clearLimits('user',${u.id})">Remove</button></td></tr>`).join("")}</tbody></table>`:`<p class="umeta">No user overrides.</p>`}
       <div class="f-row" style="margin-top:.8rem"><div class="field"><label>Add an override for</label><select id="plLimUser"><option value="">Choose a student…</option>${students.map(s=>`<option value="${s.id}">${esc(s.displayName)} · ${esc(s.username||s.email||s.phone||"")}</option>`).join("")}</select></div>
-      <div class="field" style="display:flex;align-items:flex-end"><button class="btn btn-ghost" onclick="const s=document.getElementById('plLimUser');if(s.value)PL_userLimits(Number(s.value),s.options[s.selectedIndex].text)">Edit limits</button></div></div></div>`;
+      <div class="field" style="display:flex;align-items:flex-end;gap:.4rem"><button class="btn btn-ghost" onclick="const s=document.getElementById('plLimUser');if(s.value)PL_userLimits(Number(s.value),s.options[s.selectedIndex].text)">Edit limits</button><button class="btn btn-ghost" onclick="const s=document.getElementById('plLimUser');if(s.value)FX_userAccess(Number(s.value))">Subject access</button></div></div></div>`;
+  FX_renderAccess();
 }
 async function PL_savePlatformLimits(){
   try{ await api("admin/limits/platform",{method:"PUT",body:JSON.stringify({independent:plReadLimits("pi_"),member:plReadLimits("pm_"),timezone:document.getElementById("plTz").value.trim()})}); toast("Platform limits saved"); viewLimits(); }catch(e){ toast(e.message); }
@@ -453,7 +436,7 @@ async function PL_clearLimits(scope,id){
 }
 async function PL_userLimits(id,name){
   let d; try{ d=await api(`admin/limits/user/${id}`); }catch(e){ toast(e.message); return; }
-  ftModal(`Limits · ${esc(name)}`,`<h4>Usage today</h4>${plUsageHTML(d.usage)}<h4 style="margin-top:1rem">Override (blank = inherit, “unlimited” = no limit, 0 = blocked)</h4>${plLimitInputs("u_",d.overrides,true)}`,
+  ftModal(`Limits · ${esc(name)}`,`<p><button class="btn btn-ghost btn-sm" onclick="ftCloseModal();FX_userAccess(${id})">${svg("lock","ic-sm")} Subject access (Math / English)…</button></p><h4>Usage today</h4>${plUsageHTML(d.usage)}<h4 style="margin-top:1rem">Override (blank = inherit, “unlimited” = no limit, 0 = blocked)</h4>${plLimitInputs("u_",d.overrides,true)}`,
     {foot:`${Object.keys(d.overrides).length?`<button class="btn btn-ghost" onclick="PL_clearLimits('user',${id})">Remove override</button>`:""}<button class="btn btn-primary" onclick="PL_saveLimits('user',${id},'u_')">${svg("save","ic-sm")} Save</button>`});
 }
 

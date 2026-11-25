@@ -126,6 +126,13 @@ export const users = pgTable("users", {
   // and analytics keep a valid owner.
   deactivatedAt: timestamp("deactivated_at"),
   deletedAt: timestamp("deleted_at"),
+  // Leaderboard privacy: hidden entries keep their scores and history and are
+  // only listed for the super admin. Existing accounts stay visible.
+  leaderboardVisible: boolean("leaderboard_visible").notNull().default(true),
+  // The login email in use before the last self-service email change. It keeps
+  // signing in until the new address is verified (no email delivery is set up).
+  previousEmail: text("previous_email"),
+  emailVerifiedAt: timestamp("email_verified_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -622,8 +629,13 @@ export const notifications = pgTable("notifications", {
   body: text().notNull().default(""),
   link: jsonb().$type<Record<string, unknown> | null>(),
   readAt: timestamp("read_at"),
+  // Optional idempotency key ("announcement:12"): one notification per user per key.
+  dedupeKey: text("dedupe_key"),
   createdAt: timestamp("created_at").defaultNow(),
-}, (t) => [index("notifications_user_read").on(t.userId, t.readAt, t.createdAt)]);
+}, (t) => [
+  index("notifications_user_read").on(t.userId, t.readAt, t.createdAt),
+  uniqueIndex("notifications_user_dedupe").on(t.userId, t.dedupeKey),
+]);
 
 // status: "new" | "under_review" | "resolved" | "rejected"
 // source: "bank" | "challenge" | "practice" | "mock" | "review" | "task"
@@ -722,3 +734,80 @@ export const moduleCompletions = pgTable("module_completions", {
   moduleIndex: integer("module_index").notNull(),
   completedAt: timestamp("completed_at").defaultNow(),
 }, (t) => [uniqueIndex("module_completions_attempt_module").on(t.attemptId, t.moduleIndex)]);
+
+// ─────────────── PRACTICE SESSIONS ───────────────
+// One Question Bank or Challenging Questions run. The ordered question ids are
+// fixed when the session starts, so the set and order survive a closed browser.
+// answers: { [questionId]: { selected, submitted?, correct?, attemptId?, answer?, at } }
+// kind: "bank" | "challenge"; status: "active" | "completed" | "abandoned"
+export const practiceSessions = pgTable("practice_sessions", {
+  id: serial().primaryKey(),
+  studentId: integer("student_id").notNull(),
+  kind: text().notNull().default("bank"),
+  label: text().notNull().default(""),
+  filters: jsonb().$type<Record<string, unknown>>().notNull().default({}),
+  challengeSetId: integer("challenge_set_id"),
+  questionIds: jsonb("question_ids").$type<number[]>().notNull().default([]),
+  position: integer().notNull().default(0),
+  answers: jsonb().$type<Record<string, Record<string, unknown>>>().notNull().default({}),
+  flagged: jsonb().$type<number[]>().notNull().default([]),
+  status: text().notNull().default("active"),
+  // Client-supplied key so a retried "start" never creates two sessions.
+  clientKey: text("client_key"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  completedAt: timestamp("completed_at"),
+}, (t) => [
+  index("practice_sessions_student").on(t.studentId, t.kind, t.status, t.updatedAt),
+  uniqueIndex("practice_sessions_client_key").on(t.studentId, t.clientKey),
+]);
+
+// ─────────────── SUBJECT ACCESS ───────────────
+// scope "user": an individual override set by an admin. scope "class": a class
+// preset ("english" | "math" | "both" | "custom"). scope "snapshot": the last
+// conflict-free effective access of a student, kept while class settings
+// conflict. rules: { math: { enabled, bank, challenge, lessons, rush }, ebrw: {...} }
+export const accessRules = pgTable("access_rules", {
+  id: serial().primaryKey(),
+  scope: text().notNull(),
+  targetId: integer("target_id").notNull(),
+  preset: text().notNull().default("custom"),
+  rules: jsonb().$type<Record<string, Record<string, boolean>>>().notNull().default({}),
+  updatedBy: integer("updated_by"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (t) => [uniqueIndex("access_rules_scope_target").on(t.scope, t.targetId)]);
+
+// ─────────────── CLASS ANNOUNCEMENTS ───────────────
+export const announcements = pgTable("announcements", {
+  id: serial().primaryKey(),
+  title: text().notNull(),
+  body: text().notNull().default(""),
+  classIds: jsonb("class_ids").$type<number[]>().notNull().default([]),
+  authorId: integer("author_id").notNull(),
+  // Idempotency key from the publishing browser: a retried publish returns the same row.
+  clientKey: text("client_key"),
+  publishedAt: timestamp("published_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => [
+  uniqueIndex("announcements_author_client_key").on(t.authorId, t.clientKey),
+  index("announcements_published").on(t.publishedAt),
+]);
+
+// ─────────────── READING LIBRARY ───────────────
+// Short original articles and excerpts. Follows the SAT English master switch.
+// question: { prompt, choices: {A..D}, answer, explanation, support } | null
+export const libraryArticles = pgTable("library_articles", {
+  id: serial().primaryKey(),
+  title: text().notNull(),
+  topic: text().notNull().default(""),
+  excerpt: text().notNull().default(""),
+  body: text().notNull().default(""),
+  wordCount: integer("word_count").notNull().default(0),
+  status: text().notNull().default("draft"), // "draft" | "published"
+  question: jsonb().$type<Record<string, unknown> | null>(),
+  createdBy: integer("created_by"),
+  updatedBy: integer("updated_by"),
+  publishedAt: timestamp("published_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (t) => [index("library_articles_status").on(t.status, t.publishedAt)]);

@@ -1,7 +1,7 @@
 {
   "name": "prepforge-sat",
   "version": "1.0.0",
-  "description": "PrepForge — adaptive SAT practice platform with admin and student panels",
+  "description": "PrepForge \u2014 adaptive SAT practice platform with admin and student panels",
   "type": "module",
   "private": true,
   "dependencies": {
@@ -12,5 +12,9 @@
     "drizzle-kit": "beta",
     "drizzle-orm": "beta",
     "zod": "^3.25.76"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit --target es2022 --module nodenext --moduleResolution nodenext --strict --skipLibCheck netlify/functions/api.ts netlify/functions/league-finalize.ts"
   }
 }
