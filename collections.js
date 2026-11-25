@@ -230,40 +230,7 @@ async function CI_commit(){
   }
 }
 
-// ──────────────── student: Challenging Questions ────────────────
-async function viewChallenge(){
-  crumbs([{label:"Challenging Questions"}]);
-  $c().innerHTML=`<div class="page-head fade"><h1>Challenging Questions</h1><p>Named sets of harder questions. Each set is practised like the Question Bank — instant answer review, explanations and progress tracking. Math sets open the graphing calculator beside the question.</p></div><div id="chList"><div class="spin"></div></div>`;
-  const sets=await ciLoadSets(true);
-  const el=document.getElementById("chList"); if(!el) return;
-  const live=sets.filter(s=>s.questionCount>0);
-  if(!live.length){ el.innerHTML=`<div class="empty fade"><div class="ei">${svg("trophy")}</div><p>No challenging sets yet. Check back soon.</p></div>`; return; }
-  el.innerHTML=["math","ebrw"].map(sec=>{
-    const list=live.filter(s=>s.section===sec);
-    if(!list.length) return "";
-    const S=SECTIONS[sec];
-    return `<section class="ch-group fade"><h2 class="ch-h">${esc(CI_SECTION_LABEL[sec])}</h2><div class="tile-grid tg-2">
-      ${list.map(s=>`<div class="tile ch-tile"><span class="count">${s.questionCount} question${s.questionCount===1?"":"s"}</span>
-        <div class="badge-ic ${S.tone}">${svg("trophy")}</div><h3>${esc(s.title)}</h3>${s.description?`<p>${esc(s.description)}</p>`:""}
-        <button class="btn btn-primary btn-sm" onclick="startChallengeSet(${s.id})">${svg("rush","ic-sm")} Start practice</button></div>`).join("")}
-    </div></section>`;
-  }).join("");
-}
-async function startChallengeSet(setId){
-  let limit=null;
-  try{
-    const usage=await api("usage");
-    const ch=usage.limits?.challengeDaily;
-    if(ch&&ch.limit!==null&&ch.remaining<=0){ toast(`Daily Challenging Questions limit (${ch.limit}) reached. It resets ${new Date(ch.resetsAt).toLocaleString()}.`); return; }
-    limit=ch&&ch.limit!==null?ch.remaining:null;
-  }catch{}
-  let data;
-  try{ data=await api("challenge-sets/"+setId); }catch(e){ toast(e.message); return; }
-  if(!data.questions?.length){ toast("This set has no questions yet."); return; }
-  const list=limit!=null?data.questions.slice(0,limit):data.questions;
-  clearActiveQuiz();
-  go("practice",{section:data.set.section,category:null,subcategory:null,practiceSet:list,practiceLabel:data.set.title,practiceMode:"challenge",practiceReturn:"challenge",practiceLimit:null});
-}
+// Student Challenging Questions pages live in practice.js (shared practice engine).
 
 // ──────────────── staff: Challenging Questions management ────────────────
 async function viewChallengeAdmin(){

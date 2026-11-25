@@ -11,6 +11,8 @@ import {
 } from "../../db/schema.js";
 import { hashPassword, verifyPassword, temporaryPassword, passwordProblem } from "./passwords.js";
 import { ensureScoreReport, planModules, loadModuleQuestions, isAnswerCorrect, type FullTestDeps } from "./fulltests.js";
+import { buildBoard, boardCsv, rankRows, type ScoreRow } from "./leaderboard-core.js";
+import { isSuperAdmin, snapshotStudents } from "./access.js";
 
 type DbUser = typeof users.$inferSelect;
 type Json = FullTestDeps["json"];
@@ -428,14 +430,6 @@ async function streaks(studentIds?: number[]) {
     from isl group by student_id`));
   return new Map(rows.map((r) => [Number(r.student_id), { current: r.current, longest: r.longest, days: r.days }]));
 }
-function rankRows<T extends { sort: number[] }>(rows: T[]) {
-  rows.sort((a, b) => { for (let i = 0; i < a.sort.length; i++) if (b.sort[i] !== a.sort[i]) return b.sort[i] - a.sort[i]; return 0; });
-  let rank = 0;
-  return rows.map((r, i) => {
-    if (i === 0 || r.sort.some((v, k) => v !== rows[i - 1].sort[k])) rank = i + 1;
-    return { ...r, rank };
-  });
-}
 async function periodRange(period: string) {
   const b = await bounds();
   if (period === "daily") return { fromTs: tsLit(b.dayAt), fromDay: b.today, b };
@@ -443,40 +437,41 @@ async function periodRange(period: string) {
   if (period === "monthly") return { fromTs: tsLit(b.monthAt), fromDay: b.monthStart, b };
   return { fromTs: null, fromDay: null, b };
 }
-async function leaderboard(category: string, period: string, classId: number | null) {
-  return cached(`lb:${category}:${period}:${classId ?? "all"}`, 60_000, async () => {
+// Scores only (cached briefly); names and visibility are read fresh on every
+// request so hiding an entry takes effect immediately.
+async function leaderboardScores(category: string, period: string): Promise<ScoreRow[]> {
+  return cached(`lb:${category}:${period}`, 60_000, async () => {
     const { fromTs, fromDay } = await periodRange(period);
-    let pool = await db.select({ id: users.id, displayName: users.displayName }).from(users)
-      .where(and(eq(users.role, "student"), eq(users.status, "active")));
-    if (classId) {
-      const members = new Set((await db.select({ id: classEnrollments.studentId }).from(classEnrollments)
-        .where(and(eq(classEnrollments.classId, classId), eq(classEnrollments.status, "active")))).map((r) => r.id));
-      pool = pool.filter((p) => members.has(p.id));
-    }
-    const names = new Map(pool.map((p) => [p.id, p.displayName]));
-    let rows: { studentId: number; value: number; extra: Record<string, number>; sort: number[] }[] = [];
+    const rows: ScoreRow[] = [];
     if (category === "points") {
-      rows = (await pointsBoard(fromTs, null, fromDay, null)).filter((r) => names.has(r.studentId)).map((r) => ({ ...r, sort: [r.value] }));
+      for (const r of await pointsBoard(fromTs, null, fromDay, null)) rows.push({ ...r, sort: [r.value] });
     } else if (category === "accuracy") {
       for (const [id, f] of await firstResponses(fromTs, null)) {
-        if (!names.has(id) || f.answered < 50) continue;
+        if (f.answered < 50) continue;
         const acc = Math.round((f.correct / f.answered) * 1000) / 10;
         rows.push({ studentId: id, value: acc, extra: { correct: f.correct, answered: f.answered }, sort: [f.correct / f.answered, f.correct, f.answered] });
       }
     } else {
       for (const [id, s] of await streaks()) {
-        if (!names.has(id) || s.current <= 0) continue;
+        if (s.current <= 0) continue;
         rows.push({ studentId: id, value: s.current, extra: { longest: s.longest }, sort: [s.current, s.longest] });
       }
     }
-    const ranked = rankRows(rows).slice(0, 100);
-    const ids = ranked.map((r) => r.studentId);
-    const badges = ids.length ? await db.select({ studentId: badgeAwards.studentId, badgeKey: badgeAwards.badgeKey }).from(badgeAwards).where(inArray(badgeAwards.studentId, ids)) : [];
-    return ranked.map(({ sort, ...r }) => ({
-      ...r, displayName: names.get(r.studentId) || "Student",
-      badges: badges.filter((x) => x.studentId === r.studentId).map((x) => x.badgeKey),
-    }));
+    return rows;
   });
+}
+async function leaderboard(category: string, period: string, classId: number | null, opts: { superAdmin: boolean; search?: string; page?: number; pageSize?: number }) {
+  let pool = await db.select({ id: users.id, username: users.username, visible: users.leaderboardVisible }).from(users)
+    .where(and(eq(users.role, "student"), eq(users.status, "active")));
+  if (classId) {
+    const members = new Set((await db.select({ id: classEnrollments.studentId }).from(classEnrollments)
+      .where(and(eq(classEnrollments.classId, classId), eq(classEnrollments.status, "active")))).map((r) => r.id));
+    pool = pool.filter((p) => members.has(p.id));
+  }
+  const board = buildBoard(await leaderboardScores(category, period), pool, opts);
+  const ids = board.rows.map((r) => r.studentId);
+  const badges = ids.length ? await db.select({ studentId: badgeAwards.studentId, badgeKey: badgeAwards.badgeKey }).from(badgeAwards).where(inArray(badgeAwards.studentId, ids)) : [];
+  return { ...board, rows: board.rows.map((r) => ({ ...r, badges: badges.filter((x) => x.studentId === r.studentId).map((x) => x.badgeKey) })) };
 }
 
 // Championship badges for the last completed week and month, awarded once
@@ -750,12 +745,13 @@ export async function handlePlatform(req: Request, parts: string[], deps: FullTe
     const auth = await requireUser(req);
     if (auth.error) return auth.error;
     const u = auth.user!;
-    const [[n], [m], reports] = await Promise.all([
+    const [[n], [m], reports, [ann]] = await Promise.all([
       db.select({ n: sql<number>`count(*)::int` }).from(notifications).where(and(eq(notifications.userId, u.id), isNull(notifications.readAt))),
       db.select({ n: sql<number>`count(*)::int` }).from(messages).where(and(eq(messages.recipientId, u.id), isNull(messages.readAt))),
       u.role === "admin" ? db.select({ n: sql<number>`count(*)::int` }).from(questionReports).where(eq(questionReports.status, "new")) : Promise.resolve([{ n: 0 }]),
+      db.select({ n: sql<number>`count(*)::int` }).from(notifications).where(and(eq(notifications.userId, u.id), isNull(notifications.readAt), eq(notifications.kind, "announcement"))),
     ]);
-    return json({ notifications: n.n, messages: m.n, reports: reports[0]?.n ?? 0 });
+    return json({ notifications: n.n, messages: m.n, reports: reports[0]?.n ?? 0, announcements: ann?.n ?? 0 });
   }
 
   // ── question reports ──
@@ -1006,6 +1002,7 @@ export async function handlePlatform(req: Request, parts: string[], deps: FullTe
     const auth = await requireUser(req, ["student", "mentor", "admin"]);
     if (auth.error) return auth.error;
     const u = auth.user!;
+    const superAdmin = isSuperAdmin(u);
     finalizeLeagues().catch((e) => console.error("league finalize failed", e));
     const category = ["points", "accuracy", "streak"].includes(String(url.searchParams.get("category"))) ? String(url.searchParams.get("category")) : "points";
     const period = ["daily", "weekly", "monthly", "all"].includes(String(url.searchParams.get("period"))) ? String(url.searchParams.get("period")) : "weekly";
@@ -1014,9 +1011,27 @@ export async function handlePlatform(req: Request, parts: string[], deps: FullTe
       : (await db.select({ id: classes.id }).from(classes).where(u.role === "mentor" ? and(eq(classes.mentorId, u.id), isNull(classes.deletedAt)) : isNull(classes.deletedAt))).map((c) => c.id);
     if (classId && !myClasses.includes(classId)) classId = null;
     const classList = myClasses.length ? await db.select({ id: classes.id, name: classes.name }).from(classes).where(inArray(classes.id, myClasses)) : [];
-    const rows = await leaderboard(category, period, classId);
+    const search = str(url.searchParams.get("q"), 60);
+    const exporting = url.searchParams.get("format") === "csv";
+    const board = await leaderboard(category, period, classId, {
+      superAdmin, search, page: exporting ? 0 : Math.max(0, Number(url.searchParams.get("page")) || 0), pageSize: exporting ? 200 : 50,
+    });
+    const unit = category === "points" ? "points" : category === "accuracy" ? "%" : "days";
+    if (exporting) {
+      return new Response(boardCsv(board.all.slice(0, 500), unit, superAdmin), {
+        headers: { "content-type": "text/csv; charset=utf-8", "content-disposition": `attachment; filename="leaderboard-${category}-${period}.csv"`, "cache-control": "no-store" },
+      });
+    }
     const b = await bounds();
-    return json({ category, period, classId, classes: classList, rows, me: u.role === "student" ? rows.find((r: any) => r.studentId === u.id) ?? null : null, timezone: b.tz, minAccuracyQuestions: 50 });
+    // A student sees their own entry only while it is visible to everyone.
+    const me = u.role === "student" ? board.all.find((r) => r.studentId === u.id) ?? null : null;
+    const strip = <T extends { hidden: boolean }>(r: T) => (superAdmin ? r : { ...r, hidden: undefined });
+    return json({
+      category, period, classId, classes: classList, rows: board.rows.map(strip), total: board.total, page: board.page, pageSize: board.pageSize,
+      superAdmin, hiddenCount: board.hiddenCount, search,
+      me: me ? strip(me) : null, myVisibility: u.role === "student" ? u.leaderboardVisible : null,
+      timezone: b.tz, minAccuracyQuestions: 50,
+    });
   }
   if (resource === "achievements" && method === "GET") {
     const auth = await requireUser(req, ["student", "mentor", "admin"]);
@@ -1112,6 +1127,7 @@ export async function handlePlatform(req: Request, parts: string[], deps: FullTe
       const action = str(b.action, 20); // "add" | "transfer" | "remove"
       const [student] = studentId ? await db.select().from(users).where(and(eq(users.id, studentId), eq(users.role, "student"))).limit(1) : [];
       if (!student) return json({ error: "Student not found." }, 404);
+      await snapshotStudents([student.id]);
       const now = new Date();
       if (action === "remove") {
         await db.update(classEnrollments).set({ status: "removed" }).where(and(eq(classEnrollments.classId, cls.id), eq(classEnrollments.studentId, student.id), eq(classEnrollments.status, "active")));

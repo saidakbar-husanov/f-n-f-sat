@@ -9,6 +9,7 @@
 // lesson_progress, one row per student and lesson. Skill mastery is built from
 // skill_evidence, one row per student and distinct question, so retries,
 // classes and language modes never count a question twice.
+import { studentAccess, allows, allowedSubjects } from "./access.js";
 import { and, asc, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { getStore } from "@netlify/blobs";
 import { randomBytes } from "node:crypto";
@@ -133,6 +134,8 @@ async function publishedPlacements(lessonId: number, classIds: number[]) {
 export async function lessonAccess(user: DbUser, lesson: LessonRow) {
   if (user.role === "student") {
     if (lesson.archivedAt) return { ok: false, classIds: [] as number[], staff: false };
+    // Subject access first: covers the lesson, its practice and its private files.
+    if (!allows((await studentAccess(user.id)).rules, lesson.section, "lessons")) return { ok: false, classIds: [] as number[], staff: false };
     const mine = await studentClassIds(user.id);
     const placed = await publishedPlacements(lesson.id, mine);
     return { ok: placed.length > 0, classIds: Array.from(new Set(placed.map((p) => p.classId))), staff: false };
@@ -260,7 +263,7 @@ const withoutKey = (q: QuestionRow) => {
 };
 
 // ─────────────── CURRICULUM ───────────────
-async function classPath(classId: number, opts: { staff: boolean; studentId?: number }) {
+async function classPath(classId: number, opts: { staff: boolean; studentId?: number; lessonSubjects?: string[] }) {
   const units = await db.select().from(learningUnits)
     .where(and(eq(learningUnits.classId, classId), opts.staff ? ne(learningUnits.status, "archived") : eq(learningUnits.status, "published")))
     .orderBy(asc(learningUnits.position), asc(learningUnits.id));
@@ -271,6 +274,8 @@ async function classPath(classId: number, opts: { staff: boolean; studentId?: nu
       opts.staff ? ne(learningPlacements.status, "archived") : eq(learningPlacements.status, "published"),
       opts.staff ? undefined : isNull(lessons.archivedAt)))
     .orderBy(asc(learningPlacements.position), asc(learningPlacements.id)) : [];
+  // Students never receive lessons of a subject whose Lessons area is off.
+  if (opts.lessonSubjects) for (let i = placed.length - 1; i >= 0; i--) if (!opts.lessonSubjects.includes(placed[i].l.section)) placed.splice(i, 1);
   const lessonIds = placed.map((x) => x.l.id);
   const progress = opts.studentId && lessonIds.length
     ? await db.select().from(lessonProgress).where(and(eq(lessonProgress.studentId, opts.studentId), inArray(lessonProgress.lessonId, lessonIds)))
@@ -431,7 +436,7 @@ export async function handleLearning(req: Request, parts: string[], deps: FullTe
       const rows = ids.length ? await db.select({ c: classes, mentor: users.displayName }).from(classes).leftJoin(users, eq(classes.mentorId, users.id)).where(inArray(classes.id, ids)).orderBy(asc(classes.name)) : [];
       const list = [];
       for (const { c: cls, mentor } of rows) {
-        const path = await classPath(cls.id, { staff: false, studentId: staff ? undefined : user.id });
+        const path = await classPath(cls.id, { staff: false, studentId: staff ? undefined : user.id, lessonSubjects: staff ? undefined : allowedSubjects((await studentAccess(user.id)).rules, "lessons") });
         list.push({ id: cls.id, name: cls.name, mentorName: mentor || "Mentor", ...(staff ? { lessons: flatLessons(path).length } : continueAndNext(path)) });
       }
       return json({ classes: list, lang, rules, role: user.role });
@@ -450,7 +455,7 @@ export async function handleLearning(req: Request, parts: string[], deps: FullTe
       const mine = await studentClassIds(user.id);
       if (!mine.includes(classId)) return json({ error: "You are not a member of this class." }, 403);
       const [cls] = await db.select().from(classes).where(eq(classes.id, classId));
-      const path = await classPath(classId, { staff: false, studentId: user.id });
+      const path = await classPath(classId, { staff: false, studentId: user.id, lessonSubjects: allowedSubjects((await studentAccess(user.id)).rules, "lessons") });
       return json({ class: { id: cls.id, name: cls.name }, units: path, ...continueAndNext(path) });
     }
 

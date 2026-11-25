@@ -31,6 +31,7 @@
 <link rel="stylesheet" href="/fulltest.css"/>
 <link rel="stylesheet" href="/platform.css"/>
 <link rel="stylesheet" href="/learning.css"/>
+<link rel="stylesheet" href="/features.css"/>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root[data-theme="dark"]{
@@ -746,6 +747,10 @@ li[data-list="ordered"]{list-style-type:decimal}
 <script src="/platform.js"></script>
 <script src="/admin-ops.js"></script>
 <script src="/learning.js"></script>
+<!-- Question Bank filters & results, server-saved practice sessions with the Full Mock navigator, Question Rush filters -->
+<script src="/practice.js"></script>
+<!-- Profiles, leaderboard privacy, subject access, announcements and the Reading Library -->
+<script src="/features.js"></script>
 <script>
 // ════════════════════════════════════════════════════════════
 //  Fast&Free SAT — single-page studio (vanilla JS)
@@ -1545,9 +1550,9 @@ document.addEventListener("keydown",event=>{
   if(document.getElementById("mathpadBack")) closeMathPad();
   else if(!zoom&&document.getElementById("tqBack")) closeTestQuestionEditor();
 });
-function isAdminPath(){ return /^\/admin\/?$/i.test(location.pathname); }
-function isMentorPath(){ return /^\/mentor\/?$/i.test(location.pathname); }
-function isStudentPath(){ return /^\/student\/?$/i.test(location.pathname); }
+function isAdminPath(){ return /^\/admin(\/|$)/i.test(location.pathname); }
+function isMentorPath(){ return /^\/mentor(\/|$)/i.test(location.pathname); }
+function isStudentPath(){ return /^\/(student|app)(\/|$)/i.test(location.pathname); }
 function appPathFor(user){ return user?.role==="admin"?"/admin":user?.role==="mentor"?"/mentor":"/student"; }
 
 // ---------- theme ----------
@@ -1722,7 +1727,7 @@ function render(){
   const path=currentPath();
 
   // A temporary password from an admin reset must be replaced first.
-  if(state.user?.profile?.mustChangePassword&&(isAdminPath()||path==="/mentor"||path==="/student"||path==="/app")){ app.innerHTML=plForcedPasswordHTML(); return; }
+  if(state.user?.profile?.mustChangePassword&&(isAdminPath()||isMentorPath()||isStudentPath())){ app.innerHTML=plForcedPasswordHTML(); return; }
   if(state.user) plStartInbox();
   if(isAdminPath()){
     if(!state.user || state.user.role!=="admin"){ app.innerHTML=adminLandingHTML(); return; }
@@ -1732,7 +1737,7 @@ function render(){
     return;
   }
 
-  if(path==="/mentor"){
+  if(isMentorPath()){
     if(!state.user){ navTo("/sign-in"); return; }
     if(state.user.role!=="mentor"){ navTo(appPathFor(state.user)); return; }
     if(state.user.status!=="active"){ app.innerHTML=mentorActivationHTML(); return; }
@@ -1742,9 +1747,10 @@ function render(){
     return;
   }
 
-  if(path==="/student"||path==="/app"){
+  if(isStudentPath()){
     if(!state.user){ navTo("/sign-in"); return; }
     if(state.user.role!=="student"){ navTo(appPathFor(state.user)); return; }
+    if(!ACC.data) primeAccess();
     app.innerHTML=shellHTML();
     document.getElementById("scrim").onclick=closeNav;
     routeView();
@@ -2275,6 +2281,8 @@ const NAV = {
     {v:"learn",label:"Lessons",icon:"target"},
     {v:"lessons",label:"Online Lessons",icon:"book"},
     {v:"vocab",label:"SAT Vocabulary",icon:"vocab"},
+    {v:"library",label:"Reading Library",icon:"book"},
+    {v:"announcements",label:"Announcements",icon:"info"},
     {v:"tasks",label:"My Tasks",icon:"pages"},
     {v:"review",label:"Review",icon:"save"},
     {v:"perf",label:"My Performance",icon:"graph"},
@@ -2292,6 +2300,7 @@ const NAV = {
     {v:"students",label:"My Students",icon:"target"},
     {v:"perf",label:"Student Performance",icon:"graph"},
     {v:"messages",label:"Messages",icon:"mail"},
+    {v:"announcements",label:"Announcements",icon:"info"},
     {v:"integrity",label:"Exam Integrity Reports",icon:"lock"},
     {v:"leaderboards",label:"Leaderboards",icon:"trophy"},
     {v:"assignments",label:"Assignments",icon:"pages"},
@@ -2301,6 +2310,7 @@ const NAV = {
     {v:"vocab",label:"Vocabulary",icon:"vocab"},
     {v:"learn",label:"Lessons & Mastery",icon:"target"},
     {v:"lessons",label:"Online Lessons",icon:"book"},
+    {v:"library",label:"Reading Library",icon:"book"},
     {v:"settings",label:"Settings",icon:"settings"},
   ],
   admin:[
@@ -2314,9 +2324,11 @@ const NAV = {
     {v:"lessons",label:"Online Lessons",icon:"book"},
     {v:"users",label:"User Management",icon:"users"},
     {v:"classesadmin",label:"Classes & Mentors",icon:"users"},
+    {v:"announcements",label:"Announcements",icon:"info"},
+    {v:"library",label:"Reading Library",icon:"book"},
     {v:"perf",label:"Student Performance",icon:"graph"},
     {v:"qreports",label:"Question Reports",icon:"flag"},
-    {v:"limits",label:"Limits Management",icon:"target"},
+    {v:"limits",label:"Limits & Access",icon:"target"},
     {v:"integrity",label:"Exam Integrity",icon:"lock"},
     {v:"leaderboards",label:"Leaderboards",icon:"trophy"},
     {v:"classes",label:"Classes",icon:"users"},
@@ -2327,7 +2339,8 @@ const NAV = {
   ],
 };
 function navActiveGroup(v){
-  if(v==="practice"&&state.practiceReturn==="challenge") return "challenge";
+  if(v==="practice"&&(state.practiceSet?state.practiceReturn:P?.returnView)==="challenge") return "challenge";
+  if(v==="practice"&&state.practiceSet) return state.practiceReturn;
   if(["bank","practice"].includes(v)) return "bank";
   if(["tests","testedit","testreview","testsit","testpreview"].includes(v)) return "tests";
   if(["lessons","lesson"].includes(v)) return "lessons";
@@ -2336,11 +2349,11 @@ function navActiveGroup(v){
 }
 function shellHTML(){
   const u=state.user;
-  const items=NAV[u.role].map(n=>`<button class="nav-item ${navActiveGroup(state.view)===n.v?"active":""}" data-v="${n.v}" onclick="go('${n.v}')">${svg(n.icon)}<span>${n.label}</span>${plNavCount(n.v)}</button>`).join("");
+  const items=NAV[u.role].map(n=>`<button class="nav-item ${navActiveGroup(state.view)===n.v?"active":""}" data-v="${n.v}" ${navAllowed(n.v)?"":"hidden"} onclick="go('${n.v}')" ${navActiveGroup(state.view)===n.v?'aria-current="page"':""}>${svg(n.icon)}<span>${n.label}</span>${plNavCount(n.v)}</button>`).join("");
   const theme=currentTheme();
   return `<div class="shell" id="shell">
     <div class="scrim" id="scrim"></div>
-    <aside class="sidebar">
+    <aside class="sidebar" aria-label="Sections">
       <div class="side-brand">
         ${brandMark()}<b>${esc(SITE.name)}</b>
         <span class="role-tag ${u.role==="student"?"stu":""}">${u.role}</span>
@@ -2371,7 +2384,11 @@ function shellHTML(){
 function openNav(){ document.getElementById("shell")?.classList.add("nav-open"); }
 function closeNav(){ document.getElementById("shell")?.classList.remove("nav-open"); }
 function go(view, extra={}){
+  const replaceEntry=!!extra.__replace; extra={...extra}; delete extra.__replace;
   if(view==="bank" && !("section" in extra)) extra={...extra,section:null,category:null,subcategory:null};
+  if(view==="bank" && !("bankStage" in extra)) extra={...extra,bankStage:null,bf:null};
+  if(view==="bank" && !("bfPage" in extra)) extra={...extra,bfPage:null};
+  if(view==="practice" && !("practiceSet" in extra) && "sid" in extra) extra={...extra,practiceSet:null};
   if(view==="lessons" && !("lessonId" in extra)) extra={...extra,lessonId:null};
   if(view==="learn" && !("learnLessonId" in extra)) extra={...extra,learnLessonId:null};
   if(typeof lxStopPlayer==="function") lxStopPlayer();
@@ -2381,8 +2398,95 @@ function go(view, extra={}){
   // An explicit navigation ends the in-progress pointer; the views that need it
   // (practice, test) write a fresh one as soon as they render.
   clearActiveQuiz();
-  Object.assign(state,{view},extra); closeNav(); render(); window.scrollTo(0,0);
+  rememberScroll();
+  Object.assign(state,{view},extra);
+  pushRoute(replaceEntry);
+  closeNav(); render(); window.scrollTo(0,0);
 }
+
+// ---------- in-app URLs & browser history ----------
+// Sections and detail pages each have a real URL (e.g. /student/bank/results?…,
+// /student/practice/42?q=3), so Back / Forward (and Alt+Left) move between
+// them with the browser's own history and a refresh or a shared link reopens
+// the same page — the server still checks every request. Moving between
+// questions or picking an answer only replaces the current entry, so it never
+// adds history steps. Nothing intercepts keyboard shortcuts.
+const ROUTE_KEYS={
+  bank:["section","category","subcategory","bankStage","bf","bfPage"], practice:["sid","q"], rush:[],
+  lessons:["lessonId"], learn:["learnClassId","learnLessonId","learnTab"], review:["reviewType"],
+  announcements:["announcementId"], library:["articleId"], testsit:["attemptId"],
+  testedit:["testId"], testreview:["testId"], testpreview:["testId"], settings:["settingsTab"],
+};
+const ROUTE_ID={practice:"sid",announcements:"announcementId",library:"articleId",lessons:"lessonId"};
+try{ history.scrollRestoration="manual"; }catch{}
+function rolePath(){ return appPathFor(state.user); }
+function routeUrl(){
+  const v=state.view; if(!v||!state.user) return location.pathname+location.search;
+  const keys=ROUTE_KEYS[v]||[], idKey=ROUTE_ID[v];
+  let path=`${rolePath()}/${v}`;
+  if(v==="practice"&&state.practiceSet) path+="/local";
+  else if(idKey&&state[idKey]!=null&&state[idKey]!=="") path+="/"+encodeURIComponent(state[idKey]);
+  if(v==="bank"&&state.bankStage==="results") path+="/results";
+  const q=new URLSearchParams();
+  for(const k of keys){
+    if(k===idKey||k==="bankStage") continue;
+    const val=state[k]; if(val==null||val==="") continue;
+    if(k==="bf"){ for(const [fk,fv] of Object.entries(val||{})) if(Array.isArray(fv)&&fv.length) q.set(fk,fv.join(",")); continue; }
+    q.set(k,typeof val==="object"?JSON.stringify(val):String(val));
+  }
+  const qs=q.toString();
+  return path+(qs?"?"+qs:"");
+}
+function pushRoute(replace){
+  const url=routeUrl(), cur=location.pathname+location.search;
+  if(url===cur) return;
+  if(replace) history.replaceState({...(history.state||{}),scroll:0},"",url);
+  else history.pushState({scroll:0},"",url);
+}
+// Keep the URL in step with the page without adding a history entry.
+function replaceRoute(){ const url=routeUrl(); if(url!==location.pathname+location.search) history.replaceState({...(history.state||{})},"",url); }
+function rememberScroll(){ try{ history.replaceState({...(history.state||{}),scroll:window.scrollY},""); }catch{} }
+// Read /<role>/<view>/<id>?… back into the router state.
+function routeFromUrl(){
+  const segs=location.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  const view=(segs[1]||"").toLowerCase();
+  if(!view){ return false; }
+  const keys=ROUTE_KEYS[view]||[];
+  const next={view};
+  for(const k of keys) next[k]=null;
+  const q=new URLSearchParams(location.search);
+  const idKey=ROUTE_ID[view];
+  if(view==="practice"&&segs[2]==="local"){ /* restored from this tab's storage */ }
+  else if(idKey&&segs[2]) next[idKey]=/^\d+$/.test(segs[2])?Number(segs[2]):segs[2];
+  if(view==="bank"){
+    next.bankStage=segs[2]==="results"?"results":null;
+    const bf={}; for(const fk of ["subjects","difficulties","domains","skills","status"]){ const v=q.get(fk); if(v) bf[fk]=v.split(",").filter(Boolean); }
+    next.bf=Object.keys(bf).length?bf:null;
+  }
+  for(const k of keys){
+    if(k===idKey||k==="bf"||k==="bankStage"||!q.has(k)) continue;
+    const raw=q.get(k); next[k]=/^\d+$/.test(raw)?Number(raw):raw;
+  }
+  if(view==="practice"&&segs[2]!=="local") next.practiceSet=null;
+  Object.assign(state,next);
+  return true;
+}
+// Scroll back to where the page was left, once its content has loaded. Gives
+// up as soon as the reader scrolls, types or touches.
+let scrollRestoreT=null;
+function restoreScroll(y){
+  clearInterval(scrollRestoreT);
+  if(!y){ window.scrollTo(0,0); return; }
+  const until=Date.now()+4000;
+  const stop=()=>{ clearInterval(scrollRestoreT); ["wheel","touchstart","keydown","pointerdown"].forEach(t=>window.removeEventListener(t,stop,true)); };
+  ["wheel","touchstart","keydown","pointerdown"].forEach(t=>window.addEventListener(t,stop,{capture:true,passive:true}));
+  const tryIt=()=>{
+    const max=document.documentElement.scrollHeight-window.innerHeight;
+    if(max>=y-2||Date.now()>until){ window.scrollTo(0,Math.min(y,max)); if(Math.abs(window.scrollY-Math.min(y,max))<4||Date.now()>until) stop(); }
+  };
+  scrollRestoreT=setInterval(tryIt,60); tryIt();
+}
+window.addEventListener("scroll",()=>{ clearTimeout(window.__scrT); window.__scrT=setTimeout(rememberScroll,150); },{passive:true});
 
 function crumbs(parts){
   const el=document.getElementById("crumbs"); if(!el) return;
@@ -2405,12 +2509,15 @@ function routeView(){
     vocab:viewVocab, vocabpractice:viewVocabPractice,
     challenge:viewChallenge, challengeadmin:viewChallengeAdmin,
     messages:viewMessages, leaderboards:viewLeaderboards, achievements:viewAchievements, perf:viewPerformance,
-    classesadmin:viewClassesAdmin, limits:viewLimits, qreports:viewQReports, integrity:viewIntegrity };
+    classesadmin:viewClassesAdmin, limits:viewLimits, qreports:viewQReports, integrity:viewIntegrity,
+    announcements:viewAnnouncements, library:viewLibrary };
   // Management views are for admins and mentors. A student who reaches one
   // (a stale link, a restored state) lands on their dashboard instead; the API
   // refuses every write from a student account regardless.
   if(state.user?.role==="student"&&STAFF_VIEWS.has(state.view)){ state.view="home"; toast("That page is for admins and mentors."); }
-  (m[state.view]||viewBank)();
+  if(!m[state.view]) state.view=state.user?.role==="admin"?"dashboard":state.user?.role==="mentor"?"classes":"home";
+  replaceRoute();
+  m[state.view]();
 }
 const $c=()=>document.getElementById("content");
 function loading(){ $c().innerHTML=`<div class="spin"></div>`; }
@@ -2437,7 +2544,7 @@ function fullQuestionHTML(q,meta=""){
 async function viewStudentDashboard(){
   crumbs([{label:"Dashboard"}]); loading();
   let activity={periods:{daily:{attempts:0,correct:0,accuracy:0},weekly:{attempts:0,correct:0,accuracy:0},total:{attempts:0,correct:0,accuracy:0}}}, tasks=[], usage={enrolled:false,used:0,limit:20,remaining:20}, openTests=[], vocabTasks=[], examTasks=[], learnOv=null;
-  try{ [activity,tasks,usage,openTests,vocabTasks,examTasks,learnOv]=await Promise.all([api("reviews"),api("assignments"),api("usage"),api("test-session").catch(()=>[]),api("vocab/tasks").catch(()=>[]),api("test-assignments").catch(()=>[]),api("learn/overview").catch(()=>null)]); }catch{}
+  try{ [activity,tasks,usage,openTests,vocabTasks,examTasks,learnOv]=await Promise.all([api("reviews?summary=1"),api("assignments?summary=1"),api("usage"),api("test-session").catch(()=>[]),api("vocab/tasks").catch(()=>[]),api("test-assignments").catch(()=>[]),api("learn/overview").catch(()=>null)]); }catch{}
   VB.tasks=vocabTasks||[];
   const open=tasks.filter(t=>t.completed<t.total).sort((a,b)=>new Date(a.dueAt)-new Date(b.dueAt));
   const next=open[0];
@@ -2448,7 +2555,8 @@ async function viewStudentDashboard(){
       return `<div style="display:flex;justify-content:space-between;gap:1rem;align-items:center;flex-wrap:wrap;margin-top:.7rem"><div><b>${esc(t.testTitle)}</b><div class="umeta">${t.timed===false?(paused?"Paused":"In progress"):paused?"Paused":"Clock running"} · Module ${t.moduleIndex+1}, question ${(t.currentQuestionIndex||0)+1} · ${t.timed===false?`Untimed${t.practiceScope==="modules"?" · selected modules":""}`:`${t.remainingTimeSeconds==null?"—":fmtTime(t.remainingTimeSeconds)} left`}</div></div><button class="btn btn-primary btn-sm" onclick="resumeTestFromCard(${t.testSessionId})">${svg(paused?"play":"clock","ic-sm")} Resume test</button></div>`;
     }).join("")}</div>`:""}
     ${next?`<div class="panel"><h2>${svg("pages","ic-sm")} Next deadline</h2><div style="display:flex;justify-content:space-between;gap:1rem;align-items:center;flex-wrap:wrap"><div><b>${esc(next.title)}</b><div class="umeta">${esc(next.classroom?.name||"Class task")} · ${next.completed}/${next.total} complete · ${esc(deadlineText(next.dueAt))}</div></div><button class="btn btn-primary btn-sm" onclick="go('tasks')">Open My Tasks</button></div></div>`:`<div class="panel"><h2>${svg("check","ic-sm")} No pending deadlines</h2><p class="umeta">Assigned work appears here as soon as your mentor publishes it.</p></div>`}
-    <div class="panel"><h2>${svg("rush","ic-sm")} Practice access</h2>${usage.limits?plUsageHTML(usage):`<p class="umeta">${usage.enrolled?"Unlimited Question Bank and Question Rush practice.":`${usage.used} of ${usage.limit} questions used today. ${usage.remaining} remaining.`}</p>`}<div style="display:flex;gap:.7rem;flex-wrap:wrap;margin-top:.8rem"><button class="btn btn-primary btn-sm" onclick="go('bank')">Question Bank</button><button class="btn btn-ghost btn-sm" onclick="go('review')">Review saved &amp; mistaken</button></div></div></div>`;
+    <div class="panel"><h2>${svg("rush","ic-sm")} Practice access</h2>${usage.limits?plUsageHTML(usage):`<p class="umeta">${usage.enrolled?"Unlimited Question Bank and Question Rush practice.":`${usage.used} of ${usage.limit} questions used today. ${usage.remaining} remaining.`}</p>`}<div style="display:flex;gap:.7rem;flex-wrap:wrap;margin-top:.8rem">${navAllowed("bank")?`<button class="btn btn-primary btn-sm" onclick="go('bank')">Question Bank</button>`:""}<button class="btn btn-ghost btn-sm" onclick="go('review')">Review saved &amp; mistaken</button></div></div><div id="dashContinue"></div></div>`;
+  if(navAllowed("bank")) renderContinue("bank","dashContinue");
 }
 
 let TASK_CACHE=[];
@@ -2462,7 +2570,7 @@ function startTask(id){
   const task=TASK_CACHE.find(row=>row.id===id); if(!task) return;
   const remaining=task.questions.filter(q=>!task.completedIds.includes(q.id));
   clearActiveQuiz();
-  state.practiceSet=remaining.length?remaining:task.questions; state.practiceLabel=task.title; state.practiceMode=`task:${id}`; state.practiceReturn="tasks"; state.view="practice"; render();
+  go("practice",{practiceSet:remaining.length?remaining:task.questions,practiceLabel:task.title,practiceMode:`task:${id}`,practiceReturn:"tasks",sid:null,q:null});
 }
 
 let REVIEW_CACHE={mistakes:[],savedQuestions:[]};
@@ -2478,7 +2586,7 @@ async function viewReview(){
 function startReview(type){
   const rows=type==="mistakes"?REVIEW_CACHE.mistakes:REVIEW_CACHE.savedQuestions;
   clearActiveQuiz();
-  state.practiceSet=rows.map(row=>row.question); state.practiceLabel=type==="mistakes"?"Mistaken questions":"Saved questions"; state.practiceMode="review"; state.practiceReturn="review"; state.view="practice"; render();
+  go("practice",{practiceSet:rows.map(row=>row.question),practiceLabel:type==="mistakes"?"Mistaken questions":"Saved questions",practiceMode:"review",practiceReturn:"review",sid:null,q:null});
 }
 
 let MB={rows:[],classes:[],sel:new Set(),filter:blankQuestionFilter(),shuffle:false};
@@ -2825,6 +2933,8 @@ function renderLessonList(){
 
 // ── one lesson: the player, the notes and the conversation ──
 async function openLesson(id){
+  // Each lesson has its own URL (/…/lessons/<id>) so Back returns to the list.
+  if(state.view!=="lessons"||Number(state.lessonId)!==Number(id)){ go("lessons",{lessonId:id}); return; }
   crumbs([{label:"Online Lessons",onclick:"go('lessons')"},{label:"Lesson"}]);
   loading();
   try{ LN.lesson=await api("lessons/"+id); }
@@ -3317,61 +3427,6 @@ function countFor(stats,section,category,subcategory){
   return stats.filter(s=>s.section===section&&(!category||s.category===category)&&(!subcategory||s.subcategory===subcategory)).reduce((a,s)=>a+Number(s.count),0);
 }
 
-async function viewBank(){
-  crumbs([{label:"Question Bank"}]);
-  if(!state.section){
-    $c().innerHTML=`<div class="page-head fade"><h1>Question Bank</h1><p>Pick a section to begin. Every item is hand-curated with a full explanation.</p></div>
-      <div class="tile-grid tg-2 fade" id="secGrid"></div>`;
-    const stats=await getStats();
-    document.getElementById("secGrid").innerHTML=Object.entries(SECTIONS).map(([k,s])=>{
-      const c=countFor(stats,k);
-      return `<button class="tile" onclick="go('bank',{section:'${k}',category:null,subcategory:null})">
-        <span class="count">${c} item${c===1?"":"s"}</span>
-        <div class="badge-ic ${s.tone}">${svg(s.icon)}</div>
-        <h3>${s.label}</h3><p>${s.blurb}</p>
-        <div class="arr">Browse domains ${svg("arr","ic-sm")}</div></button>`;
-    }).join("");
-    return;
-  }
-  // section -> topics
-  const s=SECTIONS[state.section];
-  const stats=await getStats();
-  if(!state.category){
-    crumbs([{label:"Question Bank",onclick:"go('bank',{section:null,category:null,subcategory:null})"},{label:s.label}]);
-    $c().innerHTML=`<div class="page-head fade"><h1>${s.label}</h1><p>${s.blurb}</p></div>
-      <div class="tile-grid tg-2 fade" id="catGrid"></div>`;
-    document.getElementById("catGrid").innerHTML=s.categories.map(cat=>{
-      const c=countFor(stats,state.section,cat);
-      return `<button class="tile" onclick="go('bank',{section:'${state.section}',category:${JSON.stringify(cat).replace(/"/g,'&quot;')},subcategory:null})">
-        <span class="count">${c} item${c===1?"":"s"}</span>
-        <div class="badge-ic ${s.tone}">${svg("target")}</div>
-        <h3>${esc(cat)}</h3><p>${esc(CAT_BLURB[cat]||"")}</p>
-        <div class="arr">Browse skills ${svg("arr","ic-sm")}</div></button>`;
-    }).join("");
-    return;
-  }
-
-  // topic -> SAT skill subsections
-  const skills=SUBSECTIONS[state.category]||[];
-  const total=countFor(stats,state.section,state.category);
-  crumbs([
-    {label:"Question Bank",onclick:"go('bank',{section:null,category:null,subcategory:null})"},
-    {label:s.label,onclick:`go('bank',{section:'${state.section}',category:null,subcategory:null})`},
-    {label:state.category}
-  ]);
-  $c().innerHTML=`<div class="page-head fade"><h1>${esc(state.category)}</h1><p>${esc(CAT_BLURB[state.category]||"")}</p>
-      <button class="btn btn-primary" onclick="startPractice('${state.section}',${JSON.stringify(state.category).replace(/"/g,'&quot;')},null)">${svg("rush","ic-sm")} Practice all ${total} question${total===1?"":"s"}</button></div>
-    <div class="tile-grid tg-2 fade" id="subcatGrid"></div>`;
-  document.getElementById("subcatGrid").innerHTML=skills.map(skill=>{
-    const c=countFor(stats,state.section,state.category,skill);
-    return `<button class="tile" onclick="startPractice('${state.section}',${JSON.stringify(state.category).replace(/"/g,'&quot;')},${JSON.stringify(skill).replace(/"/g,'&quot;')})">
-      <span class="count">${c} item${c===1?"":"s"}</span>
-      <div class="badge-ic ${s.tone}">${svg("layers")}</div>
-      <h3>${esc(skill)}</h3><p>Focused practice for this Digital SAT skill.</p>
-      <div class="arr">${c?"Practice":"Empty"} ${svg("arr","ic-sm")}</div></button>`;
-  }).join("");
-}
-
 // ---------- practice engine ----------
 // ---------- in-progress quiz persistence ----------
 // The question a student is on is mirrored to sessionStorage on every change,
@@ -3394,281 +3449,24 @@ function practiceCtx(){
 function samePracticeCtx(ctx){
   return !!ctx&&["section","category","subcategory","practiceLabel","practiceMode","practiceReturn"].every(k=>(ctx[k]??null)===(state[k]??null));
 }
-function savePracticeProgress(){
-  if(!P||state.view!=="practice") return;
-  const {list,idx,correct,mode,returnView,label,answered,sel,result,sid}=P;
-  writeActiveQuiz({kind:"practice",ctx:practiceCtx(),P:{list,idx,correct,mode,returnView,label,answered,sel,result,sid}});
-}
 // Called once on boot: put the router back on whatever quiz this tab was in.
 function restoreActiveQuiz(){
   if(state.user?.role!=="student") return;
-  if(!["/student","/app"].includes(currentPath())) return;
+  if(!isStudentPath()) return;
+  // Only the in-tab custom sets (tasks, review queues) come back from this
+  // tab's storage; Question Bank and Challenging Questions sessions live on
+  // the server and are reopened from their URL.
+  if(!/^\/(student|app)\/practice\/local\/?$/i.test(location.pathname)) return;
   const saved=readActiveQuiz();
-  if(saved?.kind==="practice"&&saved.P?.list?.length){
-    Object.assign(state,saved.ctx,{view:"practice",practiceSet:saved.ctx?.practiceSet?saved.P.list:null});
+  if(saved?.kind==="practice2"&&saved.P?.list?.length){
+    Object.assign(state,saved.ctx,{view:"practice",practiceSet:saved.P.list});
   }
   else if(saved?.kind==="test"&&saved.attemptId){ Object.assign(state,{view:"testsit",attemptId:saved.attemptId}); }
-}
-window.addEventListener("pagehide",()=>savePracticeProgress());
-
-let P=null;
-const practiceReturnLabel=v=>v==="tasks"?"My Tasks":v==="challenge"?"Challenging Questions":"Review";
-async function startPractice(section,category,subcategory=null){
-  try{
-    const usage=await api("usage");
-    if(!usage.enrolled&&usage.remaining<=0){ toast(`Daily Question Bank limit (${usage.limit}) reached. It resets ${new Date(usage.resetsAt).toLocaleString()}.`); go("home"); return; }
-    state.practiceLimit=usage.enrolled?null:usage.remaining;
-  }catch{}
-  state.practiceSet=null; state.practiceMode="bank"; state.practiceReturn="bank";
-  clearActiveQuiz();
-  go("practice",{section,category,subcategory});
-}
-async function viewPractice(){
-  const custom=Array.isArray(state.practiceSet);
-  const s=SECTIONS[state.section];
-  const practiceLabel=custom?state.practiceLabel:(state.subcategory||state.category);
-  crumbs(custom?[{label:practiceReturnLabel(state.practiceReturn),onclick:`go('${state.practiceReturn}')`},{label:practiceLabel}]:[
-    {label:"Question Bank",onclick:"go('bank',{section:null,category:null,subcategory:null})"},
-    {label:s.label,onclick:`go('bank',{section:'${state.section}',category:null,subcategory:null})`},
-    ...(state.subcategory?[{label:state.category,onclick:`go('bank',{section:'${state.section}',category:${JSON.stringify(state.category)},subcategory:null})`}]:[]),
-    {label:practiceLabel}
-  ]);
-  // Same set as the one this tab was already working through? Pick it back up
-  // at the same question rather than re-fetching and reshuffling from the top.
-  const saved=readActiveQuiz();
-  if(saved?.kind==="practice"&&samePracticeCtx(saved.ctx)&&saved.P?.list?.length){
-    P={...saved.P,sid:saved.P.sid||newPracticeSid(),idx:Math.min(Math.max(0,saved.P.idx|0),saved.P.list.length-1)};
-    renderQuestion(true);
-    return;
-  }
-  loading();
-  let list=custom?[...state.practiceSet]:[];
-  if(!custom){
-    const subQuery=state.subcategory?`&subcategory=${encodeURIComponent(state.subcategory)}`:"";
-    try{ list=await api(`questions?section=${encodeURIComponent(state.section)}&category=${encodeURIComponent(state.category)}${subQuery}`);}catch(e){}
-    if(state.practiceLimit!=null) list=list.slice(0,state.practiceLimit);
-  }
-  if(!list.length){
-    $c().innerHTML=`<div class="empty fade"><div class="ei">${svg("book")}</div>
-      <p>No questions in <b>${esc(practiceLabel)}</b> yet.<br>Check back once the studio adds some.</p>
-      <button class="btn btn-ghost" onclick="go('${custom?state.practiceReturn:"bank"}'${custom?"":`,{section:'${state.section}',category:${JSON.stringify(state.category).replace(/"/g,'&quot;')},subcategory:null}`})">${svg("back","ic-sm")} Back</button></div>`;
-    return;
-  }
-  // Challenging Questions sets keep their authored order; everything else is shuffled.
-  if(state.practiceMode!=="challenge") list=list.sort(()=>Math.random()-0.5);
-  P={list,idx:0,answered:false,correct:0,sel:null,result:null,mode:state.practiceMode||"bank",returnView:state.practiceReturn||"bank",label:practiceLabel,sid:newPracticeSid()};
-  renderQuestion();
-}
-// Each practice session gets its own id, so the docked Desmos calculator (its
-// expressions, graph and split) lasts exactly as long as the session.
-function newPracticeSid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
-// `restore` keeps the answer state that came back from storage instead of
-// starting the question fresh.
-function renderQuestion(restore=false){
-  const q=P.list[P.idx];
-  if(!restore){ P.answered=false; P.sel=null; P.result=null; }
-  const qSection=SECTIONS[q.section]||{label:q.section};
-  const pct=Math.round((P.idx/P.list.length)*100);
-  const [dl,dc]=DIFF[q.difficulty]||DIFF[3];
-  let answerArea;
-  if(q.type==="spr"){
-    answerArea=`<input class="spr-input" id="sprIn" placeholder="Type your answer" oninput="P.sel=this.value;document.getElementById('checkBtn').disabled=!this.value.trim()" onchange="savePracticeProgress()" onkeydown="if(event.key==='Enter'&&this.value.trim())checkAnswer()"/>
-      <p class="mathhint" style="margin-top:.45rem">Type fractions as <b>3/4</b> and decimals as <b>0.75</b> — either form is accepted.</p>`;
-  } else {
-    answerArea=`<div class="choices">`+["A","B","C","D"].map(l=>q.choices&&q.choices[l]!=null?
-      `<button class="choice" data-l="${l}" onclick="pickChoice('${l}')"><span class="ltr">${l}</span><span class="ct">${mathText(q.choices[l])}${questionMediaHTML(q.choiceImages?.[l],`Answer choice ${l}`,"choice")}</span></button>`:"").join("")+`</div>`;
-  }
-  $c().innerHTML=`<div class="q-shell fade">
-    <div class="q-topline">
-      <span class="pill pill-sec">${esc(qSection.label)}</span>
-      <span class="pill ${dc}">${dl}</span>
-      <span class="pill pill-muted">${esc(q.category)}</span>
-      ${q.subcategory?`<span class="pill pill-muted">${esc(q.subcategory)}</span>`:""}
-      <span style="flex:1"></span>
-      ${q.section==="math"?`<button class="btn btn-ghost btn-sm" id="practiceCalcBtn" onclick="toggleDesmosFloat()">${svg("calc","ic-sm")} Calculator</button>`:""}
-      <span style="font-family:var(--mono);font-size:.8rem;color:var(--ink3)">${P.idx+1} / ${P.list.length}</span>
-    </div>
-    <div class="q-progress"><i style="width:${pct}%"></i></div>
-    <div class="q-card" style="margin-top:1rem">
-      ${q.passage?`<div class="q-passage">${mathText(q.passage)}</div>`:""}
-      ${questionMediaHTML(q.questionImage,"Question graphic")}
-      <div class="q-prompt">${mathText(q.prompt)}</div>
-      <div id="answerArea">${answerArea}</div>
-      <div id="explainArea"></div>
-      <div class="q-actions">
-        <span class="feedback-tag" id="fbTag"></span>
-        <button class="btn btn-ghost btn-sm" id="saveQBtn" onclick="toggleSavedQuestion(${q.id})">${svg("save","ic-sm")} Save for review</button>${plReportButtonHTML(q.id,P.mode==="challenge"?"challenge":String(P.mode).startsWith("task:")?"task":P.mode==="review"?"review":"bank")}<span class="spacer"></span>
-        <button class="btn btn-primary" id="checkBtn" onclick="checkAnswer()" ${q.type==="spr"?"disabled":"disabled"}>Check answer</button>
-        <button class="btn btn-ghost" id="nextBtn" style="display:none" onclick="nextQuestion()">${P.idx+1<P.list.length?"Next question":"Finish"} ${svg("arr","ic-sm")}</button>
-      </div>
-    </div>
-  </div>`;
-  if(restore){
-    if(P.answered&&P.result) paintPracticeResult(q,P.result);
-    else if(P.sel&&q.type==="spr"){ const inp=document.getElementById("sprIn"); inp.value=P.sel; document.getElementById("checkBtn").disabled=!P.sel.trim(); }
-    else if(P.sel){ const l=P.sel; P.sel=null; pickChoice(l); }
-  }
-  // Shared Desmos layout: a calculator from another session is retired; on a
-  // non-Math question it is put away (work kept) and comes back on the next
-  // Math question; otherwise the docked split is re-laid around the new question.
-  if(desmosFloatEl&&DF.ctx!==dfContext()) desmosDestroy();
-  if(desmosFloatEl&&DF.open&&q.section!=="math") desmosHide();
-  dfAfterRender();
-  savePracticeProgress();
-}
-async function toggleSavedQuestion(questionId){
-  const btn=document.getElementById("saveQBtn");
-  try{ await api("saved-questions",{method:"POST",body:JSON.stringify({questionId})}); if(btn){btn.disabled=true;btn.textContent="Saved for review";} toast("Question saved for review"); }
-  catch(e){ toast(e.message); }
-}
-function pickChoice(l){
-  if(P.answered) return;
-  P.sel=l;
-  document.querySelectorAll(".choice").forEach(c=>c.classList.toggle("sel",c.dataset.l===l));
-  document.getElementById("checkBtn").disabled=false;
-  savePracticeProgress();
-}
-// Students never receive the answer key before answering: the server grades
-// the attempt and returns the correct answer and explanation with the result.
-async function checkAnswer(){
-  if(!P||P.answered||P.checking) return;
-  const q=P.list[P.idx];
-  let selected;
-  if(q.type==="spr"){
-    selected=(document.getElementById("sprIn").value||"").trim();
-    if(!selected) return;
-  } else {
-    if(!P.sel) return;
-    selected=P.sel;
-  }
-  const btn=document.getElementById("checkBtn"), btnLabel=btn.innerHTML;
-  const lockInputs=on=>{
-    const inp=document.getElementById("sprIn"); if(inp) inp.disabled=on;
-    document.querySelectorAll("#answerArea .choice").forEach(c=>c.disabled=on);
-  };
-  P.checking=true; btn.disabled=true; btn.textContent="Checking…"; lockInputs(true);
-  let graded=null, error=null;
-  try{ graded=await gradeAnswer(q,selected,P.mode); }catch(e){ error=e; }
-  P.checking=false;
-  // The student moved on (or left practice) while the request was in flight.
-  if(state.view!=="practice"||!P||P.list[P.idx]!==q||P.answered) return;
-  if(!graded){
-    // Leave the question unanswered so it can be checked again.
-    toast(error?.message||"Could not check your answer. Try again.");
-    lockInputs(false); btn.innerHTML=btnLabel; btn.disabled=false;
-    return;
-  }
-  const result={selected,...graded};
-  P.answered=true; P.sel=selected; P.result=result; if(result.correct)P.correct++;
-  paintPracticeResult(q,result);
-  savePracticeProgress();
-}
-// Show the graded state of the current question — after checking it, or when
-// a restored session lands on a question that was already answered. The key
-// comes from the stored result (sessions saved before the key was stripped
-// from the question list fall back to the question itself).
-function paintPracticeResult(q,result){
-  const {selected,correct}=result;
-  const answer=result.answer??q.answer, explanation=result.explanation??q.explanation;
-  if(q.type==="spr"){
-    const inp=document.getElementById("sprIn"); inp.value=selected; inp.disabled=true;
-    inp.style.borderColor=correct?"var(--mint)":"var(--red)";
-  } else {
-    document.querySelectorAll(".choice").forEach(c=>{
-      c.disabled=true;
-      if(c.dataset.l===answer) c.classList.add("right");
-      else if(c.dataset.l===selected) c.classList.add("wrong");
-      c.classList.remove("sel");
-    });
-  }
-  document.getElementById("fbTag").className="feedback-tag "+(correct?"ok":"no");
-  document.getElementById("fbTag").innerHTML=(correct?svg("check","ic-sm")+"Correct":svg("x","ic-sm")+"Not quite");
-  document.getElementById("explainArea").innerHTML=`<div class="explain ${correct?"":"bad"}">
-    <h4>${correct?"Why this works":"Correct answer: "+mathText(answer??"")}</h4>
-    <p>${mathText(explanation||"—")}</p></div>`;
-  document.getElementById("checkBtn").style.display="none";
-  document.getElementById("nextBtn").style.display="inline-flex";
-}
-function nextQuestion(){
-  if(P.idx+1<P.list.length){ P.idx++; renderQuestion(); window.scrollTo(0,0); }
-  else finishPractice();
-}
-function finishPractice(){
-  clearActiveQuiz();
-  if(desmosFloatEl) desmosDestroy();
-  const total=P.list.length, c=P.correct, pct=Math.round((c/total)*100);
-  const tone=pct>=80?"ok":pct>=50?"":"no";
-  if(P.returnView!=="bank"){
-    $c().innerHTML=`<div class="q-shell fade"><div class="q-card" style="text-align:center;padding:2.4rem"><div class="badge-ic tone-gold" style="margin:0 auto 1.1rem;width:54px;height:54px">${svg("trophy")}</div><h1 style="font-family:var(--disp);font-size:2rem;font-weight:800">Set complete</h1><p style="color:var(--ink2);margin:.4rem 0 1.2rem">${esc(P.label)}</p><div style="font-family:var(--disp);font-size:3.4rem;font-weight:800;color:var(--mint)">${pct}%</div><p style="color:var(--ink2);margin-bottom:1.8rem">${c} of ${total} correct</p><button class="btn btn-primary" onclick="go('${P.returnView}')">Return to ${practiceReturnLabel(P.returnView)}</button></div></div>`;
-    return;
-  }
-  $c().innerHTML=`<div class="q-shell fade">
-    <div class="q-card" style="text-align:center;padding:2.4rem">
-      <div class="badge-ic ${pct>=80?'tone-ebrw':pct>=50?'tone-gold':''}" style="margin:0 auto 1.1rem;width:54px;height:54px">${svg("trophy")}</div>
-      <h1 style="font-family:var(--disp);font-size:2rem;font-weight:800;letter-spacing:-.02em">Set complete</h1>
-      <p style="color:var(--ink2);margin:.4rem 0 1.6rem">${esc(state.subcategory||state.category)} · ${esc(SECTIONS[state.section].label)}</p>
-      <div style="font-family:var(--disp);font-size:3.4rem;font-weight:800;color:${pct>=80?'var(--mint)':pct>=50?'var(--gold)':'var(--red)'}">${pct}%</div>
-      <p style="color:var(--ink2);margin-bottom:1.8rem">${c} of ${total} correct</p>
-      <div style="display:flex;gap:.7rem;justify-content:center;flex-wrap:wrap">
-        <button class="btn btn-primary" onclick="startPractice('${state.section}',${JSON.stringify(state.category).replace(/"/g,'&quot;')},${state.subcategory?JSON.stringify(state.subcategory).replace(/"/g,'&quot;'):"null"})">${svg("rush","ic-sm")} Practice again</button>
-        <button class="btn btn-ghost" onclick="go('bank',{section:'${state.section}',category:${JSON.stringify(state.category).replace(/"/g,'&quot;')},subcategory:null})">${svg("back","ic-sm")} Choose another skill</button>
-        <button class="btn btn-ghost" onclick="go('profile')">${svg("profile","ic-sm")} View progress</button>
-      </div>
-    </div></div>`;
-}
-// Records and grades one answer on the server. The response carries the
-// server's verdict plus the question's answer, acceptableAnswers and
-// explanation. Throws on a network / API error so the caller can retry.
-async function recordAttempt(q,selected,mode){
-  return api("attempts",{method:"POST",body:JSON.stringify({
-    questionId:q.id, selected:String(selected), mode
-  })});
-}
-// Grade one answer: students through the server (recordAttempt); staff, who
-// already hold the key and cannot record attempts, are graded locally.
-async function gradeAnswer(q,selected,mode){
-  if(state.user?.role!=="student"&&q.answer!==undefined)
-    return {correct:q.type==="spr"?sprMatches(selected,q.answer):selected===q.answer,answer:q.answer,explanation:q.explanation||""};
-  const row=await recordAttempt(q,selected,mode);
-  return {correct:!!row?.correct,answer:row?.answer??null,explanation:row?.explanation||""};
 }
 
 // ════════════════════════════════════════════════════════════
 //  STUDENT · QUESTION RUSH
 // ════════════════════════════════════════════════════════════
-let R=null;
-function viewRush(){
-  crumbs([{label:"Question Rush"}]);
-  if(R&&R.active){ renderRushQ(); return; }
-  R={active:false,scope:"both",dur:120};
-  $c().innerHTML=`<div class="q-shell fade">
-    <div class="page-head" style="text-align:center"><h1>Question Rush</h1><p style="margin:.4rem auto 0">Beat the clock. Answer as many as you can — instant feedback, building streaks.</p></div>
-    <div class="q-card" style="text-align:center;padding:2rem">
-      <div class="badge-ic tone-gold" style="margin:0 auto 1.2rem;width:54px;height:54px">${svg("flame")}</div>
-      <p style="font-size:.74rem;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:.6rem">Section</p>
-      <div class="opt-row" id="scopeRow">
-        ${[["both","Both"],["math","Math"],["ebrw","EBRW"]].map(([v,l])=>`<button class="opt ${v==='both'?'on':''}" data-scope="${v}" onclick="setScope('${v}')">${l}</button>`).join("")}
-      </div>
-      <p style="font-size:.74rem;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin:.4rem 0 .6rem">Time</p>
-      <div class="opt-row" id="durRow">
-        ${[[60,"60s"],[120,"2 min"],[180,"3 min"]].map(([v,l])=>`<button class="opt ${v===120?'on':''}" data-dur="${v}" onclick="setDur(${v})">${l}</button>`).join("")}
-      </div>
-      <button class="btn btn-primary btn-block" style="margin-top:1rem;max-width:280px;margin-left:auto;margin-right:auto" onclick="beginRush()">${svg("rush","ic-sm")} Start rush</button>
-    </div></div>`;
-}
-function setScope(v){ R.scope=v; document.querySelectorAll("#scopeRow .opt").forEach(o=>o.classList.toggle("on",o.dataset.scope===v)); }
-function setDur(v){ R.dur=v; document.querySelectorAll("#durRow .opt").forEach(o=>o.classList.toggle("on",Number(o.dataset.dur)===v)); }
-async function beginRush(){
-  loading();
-  let qp=""; if(R.scope!=="both") qp="?section="+R.scope;
-  let list=[],usage={enrolled:true,remaining:null}; try{ [list,usage]=await Promise.all([api("questions"+qp),api("usage")]); }catch{}
-  if(!usage.enrolled&&usage.remaining<=0){ toast("Daily 20-question limit reached. Join a class for unlimited practice."); go("home"); return; }
-  if(!usage.enrolled) list=list.slice(0,usage.remaining);
-  if(!list.length){ $c().innerHTML=`<div class="empty fade"><div class="ei">${svg("flame")}</div><p>No questions available to rush yet.</p><button class="btn btn-ghost" onclick="go('rush')">${svg("back","ic-sm")} Back</button></div>`; return; }
-  R={...R,active:true,pending:false,list:list.sort(()=>Math.random()-0.5),idx:0,score:0,streak:0,best:0,answered:0,timeLeft:R.dur};
-  R.timer=setInterval(()=>{ R.timeLeft--; updateRushTimer(); if(R.timeLeft<=0) endRush(); },1000);
-  renderRushQ();
-}
 function renderRushQ(){
   if(R.idx>=R.list.length){ endRush(); return; }
   const q=R.list[R.idx];
@@ -4678,7 +4476,7 @@ function dfWrite(){
 }
 function dfContext(){
   if(state.view==="testsit"&&T?.id) return `test:${T.id}`;
-  if(state.view==="practice"&&P?.sid) return `practice:${P.sid}`;
+  if(state.view==="practice"&&(P?.calcSid||P?.sid)) return `practice:${P.calcSid||P.sid}`;
   return "practice";
 }
 function toggleDesmosFloat(){
@@ -4943,7 +4741,7 @@ window.visualViewport?.addEventListener("resize",dfOnResize);
 async function viewProfile(){
   crumbs([{label:"Profile"}]);
   loading();
-  let att=[],saved=[],activity={periods:{daily:{attempts:0,correct:0,accuracy:0},weekly:{attempts:0,correct:0,accuracy:0},total:{attempts:0,correct:0,accuracy:0}}}; try{ [att,saved,activity]=await Promise.all([api("attempts"),api("saved-questions"),api("reviews")]); }catch{}
+  let att=[],saved=[],activity={periods:{daily:{attempts:0,correct:0,accuracy:0},weekly:{attempts:0,correct:0,accuracy:0},total:{attempts:0,correct:0,accuracy:0}}}; try{ [att,saved,activity]=await Promise.all([api("attempts"),api("saved-questions"),api("reviews?summary=1")]); }catch{}
   const total=att.length, correct=att.filter(a=>a.correct).length;
   const acc=total?Math.round((correct/total)*100):0;
   // current streak = consecutive correct from most recent (att is desc by created)
@@ -4994,43 +4792,7 @@ async function removeSavedQuestion(questionId){
 // ════════════════════════════════════════════════════════════
 //  SETTINGS (shared)
 // ════════════════════════════════════════════════════════════
-function viewSettings(){
-  crumbs([{label:"Settings"}]);
-  const u=state.user; const theme=currentTheme();
-  $c().innerHTML=`<div class="page-head fade"><h1>Settings</h1><p>Personalize your studio.</p></div>
-  <div class="fade">
-    <div class="panel">
-      <h2>${svg("profile","ic-sm")} Display name</h2>
-      <div class="f-row"><div class="field"><label>Name</label><input id="setName" value="${esc(u.name)}"/></div>
-      <div class="field" style="display:flex;align-items:flex-end"><button class="btn btn-primary" onclick="saveName()">${svg("save","ic-sm")} Save name</button></div></div>
-      ${u.role==="student"?`<p style="font-size:.8rem;color:var(--ink3);margin-top:.4rem">Your progress is tracked against this name.</p>`:""}
-    </div>
-    <div class="panel">
-      <h2>${svg(theme==="dark"?"moon":"sun","ic-sm")} Appearance</h2>
-      <div class="opt-row" style="justify-content:flex-start">
-        <button type="button" class="opt ${theme==='dark'?'on':''}" data-theme-opt="dark" onclick="setTheme('dark',event)">${svg("moon","ic-sm")} Dark</button>
-        <button type="button" class="opt ${theme==='light'?'on':''}" data-theme-opt="light" onclick="setTheme('light',event)">${svg("sun","ic-sm")} Light</button>
-      </div>
-    </div>
-    ${u.profile&&(u.profile.username||u.profile.email||u.profile.phone)&&u.profile.provider!=="admin"?`<div class="panel"><h2>${svg("lock","ic-sm")} Password</h2>${plPasswordFormHTML(false)}</div>`:""}
-    <div class="panel">
-      <h2>${svg("logout","ic-sm")} Session</h2>
-      <p style="color:var(--ink2);font-size:.9rem;margin-bottom:1rem">Signed in as <b>${esc(u.name)}</b> (${u.role}).</p>
-      <button class="btn btn-danger" onclick="logout()">${svg("logout","ic-sm")} Log out</button>
-    </div>
-  </div>`;
-}
-function saveName(){
-  const v=(document.getElementById("setName").value||"").trim();
-  if(!v){ toast("Name can't be empty"); return; }
-  if(state.user.role==="student" && state.user.profile){
-    const p={...state.user.profile, displayName:v};
-    localStorage.setItem(LS.user, JSON.stringify(p));
-  } else {
-    localStorage.setItem(LS.name,v);
-  }
-  state.user=loadUser(); toast("Name updated"); render();
-}
+// Settings (profile, leaderboard privacy, password) live in features.js.
 
 // ════════════════════════════════════════════════════════════
 //  ABOUT (student, read-only)
@@ -5654,12 +5416,14 @@ async function viewUsers(){
     let joined="—"; try{ if(u.createdAt) joined=new Date(u.createdAt).toLocaleDateString(); }catch{}
     const status=u.status||"active";
     const self=u.id===state.user.profile?.id;
-    const actions=self?`<span class="umeta">Your account</span>`:u.role==="admin"?`<div style="display:flex;gap:.35rem;flex-wrap:wrap"><button class="btn btn-danger btn-sm" onclick="AO_removeUser(${u.id})">${svg("trash","ic-sm")} Remove admin…</button></div>`:status==="deactivated"?`<div style="display:flex;gap:.35rem;flex-wrap:wrap">
+    const isSuper=!!state.user.profile?.superAdmin;
+    const actions=self?`<span class="umeta">Your account</span>`:u.role==="admin"?`<div style="display:flex;gap:.35rem;flex-wrap:wrap">${u.superAdmin?`<span class="pill pill-sec">Super admin</span>`:isSuper?`<button class="btn btn-ghost btn-sm" onclick="FX_setAdmin(${u.id},false)">Revoke admin access</button>`:""}<button class="btn btn-danger btn-sm" onclick="AO_removeUser(${u.id})">${svg("trash","ic-sm")} Remove admin…</button></div>`:status==="deactivated"?`<div style="display:flex;gap:.35rem;flex-wrap:wrap">
       <button class="btn btn-ghost btn-sm" onclick="AO_reactivate(${u.id})">Reactivate</button>
       <button class="btn btn-danger btn-sm" onclick="AO_removeUser(${u.id})">${svg("trash","ic-sm")} Delete permanently…</button></div>`:`<div style="display:flex;gap:.35rem;flex-wrap:wrap">
       ${u.role==="mentor"&&status==="pending"?`<button class="btn btn-primary btn-sm" onclick="createMentorCode(${u.id},'${esc(u.displayName).replace(/'/g,"&#39;")}')">Approve</button>`:""}
       <button class="btn btn-ghost btn-sm" onclick="PL_resetPassword(${u.id},'${esc(u.displayName).replace(/'/g,"&#39;")}')">${svg("lock","ic-sm")} Reset password</button>
-      ${u.role==="student"?`<button class="btn btn-ghost btn-sm" onclick="PL_userLimits(${u.id},'${esc(u.displayName).replace(/'/g,"&#39;")}')">Limits</button>`:""}
+      ${u.role==="student"?`<button class="btn btn-ghost btn-sm" onclick="PL_userLimits(${u.id},'${esc(u.displayName).replace(/'/g,"&#39;")}')">Limits</button><button class="btn btn-ghost btn-sm" onclick="FX_userAccess(${u.id})">Subject access</button>`:""}
+      ${u.role==="mentor"&&status==="active"&&isSuper?`<button class="btn btn-ghost btn-sm" onclick="FX_setAdmin(${u.id},true)">Grant admin access</button>`:""}
       <button class="btn ${status==="banned"?"btn-ghost":"btn-danger"} btn-sm" onclick="setUserBan(${u.id},${status!=="banned"})">${status==="banned"?"Unban":"Ban"}</button>
       <button class="btn btn-danger btn-sm" onclick="AO_removeUser(${u.id})">${svg("trash","ic-sm")} ${u.role==="mentor"?"Remove mentor…":"Remove student…"}</button></div>`;
     return `<tr>
@@ -5803,6 +5567,7 @@ function toast(msg){
 
 // ---------- boot ----------
 async function boot(){
+  if(state.user&&(isStudentPath()||isMentorPath()||isAdminPath())) routeFromUrl();
   restoreActiveQuiz();
   state.view = state.view || (state.user ? (state.user.role==="admin"?"dashboard":state.user.role==="mentor"?"classes":"home") : "bank");
   await processGoogleCallback();
@@ -5815,7 +5580,20 @@ async function boot(){
 }
 boot();
 // Re-render on browser back/forward — public and app routes are URL-driven.
-window.addEventListener("popstate",()=>render());
+window.addEventListener("popstate",e=>{
+  if(state.user&&(isStudentPath()||isMentorPath()||isAdminPath())){
+    const prev=state.view;
+    if(typeof lxStopPlayer==="function") lxStopPlayer();
+    if(prev==="testsit") leaveTestSit();
+    if(TQ) closeTestQuestionEditor();
+    if(typeof ftCloseModal==="function") ftCloseModal();
+    routeFromUrl();
+    if(state.view!=="practice"&&state.view!=="rush"&&state.view!=="testsit"&&desmosFloatEl) desmosDestroy();
+    closeNav(); render(); restoreScroll(e.state?.scroll||0);
+    return;
+  }
+  render();
+});
 </script>
 </body>
 </html>

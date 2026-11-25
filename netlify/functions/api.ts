@@ -31,6 +31,12 @@ import {
 } from "../../db/schema.js";
 import { handleAdminOps, deleteOneQuestion, RETIRED } from "../lib/admin-ops.js";
 import { handleLearning, canOpenLibraryLesson } from "../lib/learning.js";
+import { handleAccess, accessFor, allows, allowedSubjects, isSuperAdmin, snapshotStudents } from "../lib/access.js";
+import { subjectOpen } from "../lib/access-core.js";
+import { handlePractice, invalidateBankMeta } from "../lib/practice.js";
+import { handleProfile, freshHandle, usernameProblem } from "../lib/profile.js";
+import { handleAnnouncements } from "../lib/announcements.js";
+import { handleLibrary } from "../lib/library.js";
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -69,6 +75,8 @@ const publicUser = (u: DbUser) => ({
   email: u.email, phone: u.phone, role: u.role, provider: u.provider,
   avatarUrl: u.avatarUrl, status: u.status, approvedAt: u.approvedAt, bannedAt: u.bannedAt,
   mustChangePassword: u.mustChangePassword, preferences: u.preferences ?? {},
+  leaderboardVisible: u.leaderboardVisible, previousEmail: u.previousEmail, emailVerified: !!u.emailVerifiedAt,
+  superAdmin: isSuperAdmin(u), hasPassword: !!u.passwordHash,
 });
 
 // One lookup per request, however many handlers ask who is calling.
@@ -131,7 +139,7 @@ async function oauthUpsert(provider: string, providerId: string, email: string |
   if (!u) {
     const role = requestedRole === "mentor" ? "mentor" : "student";
     [u] = await db.insert(users).values({
-      provider, providerId, email: mail,
+      provider, providerId, email: mail, username: await freshHandle(),
       displayName: displayName || (mail ? mail.split("@")[0] : role === "mentor" ? "Mentor" : "Student"),
       role, status: role === "mentor" ? "pending" : "active", avatarUrl,
     }).returning();
@@ -278,7 +286,7 @@ const BRANDING_KINDS = ["logo", "og"] as const;
 type BrandingKind = (typeof BRANDING_KINDS)[number];
 const brandingStore = () => getStore({ name: "branding", consistency: "strong" });
 
-async function studentActivity(studentId: number) {
+async function studentActivity(studentId: number, summaryOnly = false) {
   const key = `u${studentId}`;
   const [summaryRows, periodRows, recent, mistakes, saved] = await Promise.all([
     db.select({
@@ -292,12 +300,12 @@ async function studentActivity(studentId: number) {
       weeklyAttempts: sql<number>`count(*) filter (where ${attempts.createdAt} >= date_trunc('week', now()))::int`,
       weeklyCorrect: sql<number>`count(*) filter (where ${attempts.correct} and ${attempts.createdAt} >= date_trunc('week', now()))::int`,
     }).from(attempts).where(eq(attempts.student, key)),
-    db.select().from(attempts).where(eq(attempts.student, key)).orderBy(desc(attempts.createdAt)).limit(10),
-    db.select({ attempt: attempts, question: questions }).from(attempts)
+    summaryOnly ? Promise.resolve([] as (typeof attempts.$inferSelect)[]) : db.select().from(attempts).where(eq(attempts.student, key)).orderBy(desc(attempts.createdAt)).limit(10),
+    summaryOnly ? Promise.resolve([] as { attempt: typeof attempts.$inferSelect; question: QuestionRow }[]) : db.select({ attempt: attempts, question: questions }).from(attempts)
       .innerJoin(questions, eq(attempts.questionId, questions.id))
       .where(and(eq(attempts.student, key), eq(attempts.correct, false)))
       .orderBy(desc(attempts.createdAt)),
-    db.select({ saved: savedQuestions, question: questions }).from(savedQuestions)
+    summaryOnly ? Promise.resolve([] as { saved: typeof savedQuestions.$inferSelect; question: QuestionRow }[]) : db.select({ saved: savedQuestions, question: questions }).from(savedQuestions)
       .innerJoin(questions, eq(savedQuestions.questionId, questions.id))
       .where(eq(savedQuestions.studentId, studentId))
       .orderBy(desc(savedQuestions.createdAt)),
@@ -769,6 +777,14 @@ export default async (req: Request) => {
     // Destructive admin operations (bulk question delete, account and class removal).
     const adminOps = await handleAdminOps(req, parts, { json, requireUser });
     if (adminOps) return adminOps;
+    // Subject access (student view + admin editor), practice sessions & pool,
+    // profile, class announcements and the Reading Library.
+    for (const h of [handleAccess, handlePractice, handleAnnouncements, handleLibrary]) {
+      const r = await h(req, parts, { json, requireUser });
+      if (r) return r;
+    }
+    const profile = await handleProfile(req, parts, { json, requireUser, publicUser });
+    if (profile) return profile;
     // Class-based SAT Lessons: curricula, progress, mastery and private materials.
     const learning = await handleLearning(req, parts, { json, requireUser });
     if (learning) return learning;
@@ -817,18 +833,20 @@ export default async (req: Request) => {
           return json({ error: "Password must be at least 6 characters." }, 400);
         if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))
           return json({ error: "Enter a valid email address." }, 400);
+        if (username && usernameProblem(username)) return json({ error: usernameProblem(username) }, 400);
 
         // Friendly duplicate check before relying on the DB unique constraints.
         const clashes = [
-          username ? eq(users.username, username) : null,
+          username ? sql`lower(${users.username}) = ${username}` : null,
           email ? eq(users.email, email) : null,
+          email ? eq(users.previousEmail, email) : null,
           phone ? eq(users.phone, phone) : null,
         ].filter(Boolean) as any[];
         const [exists] = await db.select().from(users).where(or(...clashes)).limit(1);
         if (exists) return json({ error: "An account with those details already exists." }, 409);
 
         const [u] = await db.insert(users).values({
-          displayName, username, email, phone,
+          displayName, username: username || await freshHandle(), email, phone,
           passwordHash: hashPassword(password), provider: "password", role,
           status: role === "mentor" ? "pending" : "active",
         }).returning();
@@ -843,7 +861,8 @@ export default async (req: Request) => {
         if (!idf || !password) return json({ error: "Enter your login and password." }, 400);
         const low = idf.toLowerCase();
         const [u] = await db.select().from(users)
-          .where(or(eq(users.username, low), eq(users.email, low), eq(users.phone, idf)))
+          .where(or(eq(users.username, low), eq(users.email, low), eq(users.phone, idf), eq(users.previousEmail, low)))
+          .orderBy(sql`case when ${users.email} = ${low} or ${users.username} = ${low} then 0 else 1 end`)
           .limit(1);
         if (!u || !verifyPassword(password, u.passwordHash))
           return json({ error: "Incorrect login or password." }, 401);
@@ -1054,6 +1073,9 @@ export default async (req: Request) => {
         )).limit(1);
         if (existing?.status === "active") return json({ error: "You already belong to this class." }, 409);
         if (existing?.status === "banned") return json({ error: "This mentor has blocked you from rejoining the class." }, 403);
+        // Remember current subject access first: if the new class's settings
+        // conflict with another class, the student keeps what they have now.
+        await snapshotStudents([auth.user!.id]);
         const now = new Date();
         if (existing) await db.update(classEnrollments).set({ status: "active", joinedAt: now }).where(eq(classEnrollments.id, existing.id));
         else await db.insert(classEnrollments).values({ classId: invite.classId, studentId: auth.user!.id });
@@ -1189,19 +1211,39 @@ export default async (req: Request) => {
           rows = await db.select().from(assignments).orderBy(assignments.dueAt);
         }
 
+        if (auth.user!.role === "student") {
+          // Batched (no per-task queries). Questions of a subject that is
+          // switched off for this student are withheld. ?summary=1 (dashboard)
+          // returns progress only, without question content.
+          const summaryOnly = url.searchParams.get("summary") === "1";
+          const a = await accessFor(req, auth.user!);
+          const classIdsUsed = [...new Set(rows.map((r) => r.classId))];
+          const allQ = [...new Set(rows.flatMap((r) => r.questionIds))];
+          const [classRows, qRows, done] = await Promise.all([
+            classIdsUsed.length ? db.select().from(classes).where(inArray(classes.id, classIdsUsed)) : [],
+            allQ.length ? (summaryOnly ? db.select({ id: questions.id, section: questions.section }).from(questions).where(inArray(questions.id, allQ)) : db.select().from(questions).where(inArray(questions.id, allQ))) : [],
+            rows.length ? db.select({ mode: attempts.mode, questionId: attempts.questionId }).from(attempts).where(and(
+              eq(attempts.student, `u${auth.user!.id}`), inArray(attempts.mode, rows.map((r) => `task:${r.id}`)))) : [],
+          ]);
+          const qById = new Map((qRows as any[]).map((q) => [q.id, q]));
+          return json(rows.map((assignment) => {
+            const visible = assignment.questionIds.map((qid) => qById.get(qid)).filter((q) => q && subjectOpen(a.rules, q.section));
+            const visibleIds = new Set(visible.map((q: any) => q.id));
+            const completedIds = [...new Set(done.filter((d) => d.mode === `task:${assignment.id}`).map((d) => d.questionId))].filter((qid) => visibleIds.has(qid));
+            return {
+              ...assignment, questionIds: [...visibleIds], classroom: classRows.find((c) => c.id === assignment.classId),
+              ...(summaryOnly ? {} : { questions: visible.map((q: any) => withoutKey(q)) }),
+              completedIds, completed: completedIds.length, total: visibleIds.size, withheld: assignment.questionIds.length - visibleIds.size,
+            };
+          }));
+        }
         const result = [];
         for (const assignment of rows) {
           const [classroom] = await db.select().from(classes).where(eq(classes.id, assignment.classId));
           const taskQuestions = assignment.questionIds.length
             ? await db.select().from(questions).where(inArray(questions.id, assignment.questionIds))
             : [];
-          if (auth.user!.role === "student") {
-            const taskAttempts = await db.select().from(attempts).where(and(
-              eq(attempts.student, `u${auth.user!.id}`), eq(attempts.mode, `task:${assignment.id}`),
-            ));
-            const completedIds = Array.from(new Set(taskAttempts.map((row) => row.questionId)));
-            result.push({ ...assignment, classroom, questions: taskQuestions.map(withoutKey), completedIds, completed: completedIds.length, total: assignment.questionIds.length });
-          } else {
+          {
             const enrollments = await db.select().from(classEnrollments).where(and(
               eq(classEnrollments.classId, assignment.classId), eq(classEnrollments.status, "active"),
             ));
@@ -1680,6 +1722,8 @@ export default async (req: Request) => {
         if (role === "student" && lesson.status !== "published")
           return json({ error: "This lesson is not available yet." }, 404);
         if (!(await canOpenLibraryLesson(auth.user!, lesson))) return json({ error: "This lesson is not available to you." }, 403);
+        if (role === "student" && !allows((await accessFor(req, auth.user!)).rules, lesson.section, "lessons"))
+          return json({ error: "Lessons for this subject are not available on your account.", locked: true }, 403);
         if (method === "GET") return json(await lessonCommentTree(lessonId));
         if (method === "POST") {
           const b = await req.json();
@@ -1706,6 +1750,8 @@ export default async (req: Request) => {
           return json({ error: "This lesson is not available yet." }, 404);
         // Class lessons are private to the classes that use them.
         if (!(await canOpenLibraryLesson(auth.user!, lesson))) return json({ error: "This lesson is not available to you." }, 403);
+        if (role === "student" && !allows((await accessFor(req, auth.user!)).rules, lesson.section, "lessons"))
+          return json({ error: "Lessons for this subject are not available on your account.", locked: true }, 403);
         return json(await lessonWithMeta(lesson, true));
       }
 
@@ -1715,7 +1761,11 @@ export default async (req: Request) => {
         const subcategory = url.searchParams.get("subcategory");
         // The open library lists public lessons only; class lessons live in their curricula.
         const conds = [eq(lessons.visibility, "public"), isNull(lessons.archivedAt)];
-        if (role === "student") conds.push(eq(lessons.status, "published"));
+        if (role === "student") {
+          conds.push(eq(lessons.status, "published"));
+          const open = allowedSubjects((await accessFor(req, auth.user!)).rules, "lessons");
+          conds.push(open.length ? inArray(lessons.section, open) : sql`false`);
+        }
         if (section) conds.push(eq(lessons.section, section));
         if (category) conds.push(eq(lessons.category, category));
         if (subcategory) conds.push(eq(lessons.subcategory, subcategory));
@@ -1922,6 +1972,10 @@ export default async (req: Request) => {
     // ─────────────── QUESTIONS ───────────────
     if (resource === "questions") {
       if (id === "stats" && method === "GET") {
+        // Counts are content too: a student only sees the subjects open to them.
+        const viewer = await userFromReq(req);
+        const statsAccess = viewer?.role === "student" ? await accessFor(req, viewer) : null;
+        const open = statsAccess ? allowedSubjects(statsAccess.rules, "bank") : null;
         const rows = await db
           .select({
             section: questions.section,
@@ -1930,7 +1984,7 @@ export default async (req: Request) => {
             count: sql<number>`count(*)::int`,
           })
           .from(questions)
-          .where(bankOnly)
+          .where(open ? (open.length ? and(bankOnly, inArray(questions.section, open)) : sql`false`) : bankOnly)
           .groupBy(questions.section, questions.category, questions.subcategory);
         return json(rows);
       }
@@ -1961,6 +2015,13 @@ export default async (req: Request) => {
         const category = url.searchParams.get("category");
         const subcategory = url.searchParams.get("subcategory");
         const conds = [bankOnly];
+        if (auth.user!.role === "student") {
+          // Only subjects whose Question Bank or Question Rush is open.
+          const a = await accessFor(req, auth.user!);
+          const open = [...new Set([...allowedSubjects(a.rules, "bank"), ...allowedSubjects(a.rules, "rush")])];
+          if (section && !open.includes(section)) return json({ error: "This subject is not available on your account.", locked: true }, 403);
+          conds.push(open.length ? inArray(questions.section, open) : sql`false`);
+        }
         if (section) conds.push(eq(questions.section, section));
         if (category) conds.push(eq(questions.category, category));
         if (subcategory) conds.push(eq(questions.subcategory, subcategory));
@@ -1993,6 +2054,7 @@ export default async (req: Request) => {
             explanation: sanitizeRichHtml(b.explanation ?? ""),
           })
           .returning();
+        invalidateBankMeta();
         return json(row, 201);
       }
 
@@ -2018,6 +2080,7 @@ export default async (req: Request) => {
           })
           .where(eq(questions.id, Number(id)))
           .returning();
+        invalidateBankMeta();
         return json(row);
       }
 
@@ -2058,6 +2121,11 @@ export default async (req: Request) => {
           if (!assignment || !taskEnrollment || !assignment.questionIds.includes(question.id))
             return json({ error: "This question is not part of an active assignment." }, 403);
         }
+        // Current subject access, checked on every answer.
+        const access = await accessFor(req, auth.user!);
+        const area = mode === "rush" ? "rush" : mode === "challenge" ? "challenge" : mode === "bank" ? "bank" : null;
+        if (area ? !allows(access.rules, question.section, area) : !subjectOpen(access.rules, question.section))
+          return json({ error: "This subject is not available on your account.", locked: true }, 403);
         const selected = String(b.selected ?? "").trim().slice(0, 200);
         // Daily limits: bank & rush share the Question Bank allowance, sets use
         // the Challenging Questions allowance; class tasks and review are never limited.
@@ -2111,7 +2179,15 @@ export default async (req: Request) => {
       if (!Number.isInteger(studentId)) return json({ error: "Invalid student." }, 400);
       if (auth.user!.role === "mentor" && !(await mentorCanAccessStudent(auth.user!.id, studentId)))
         return json({ error: "Student is not in one of your classes." }, 403);
-      return json(await studentActivity(studentId));
+      // ?summary=1 (dashboard): totals only, no question content.
+      const summaryOnly = url.searchParams.get("summary") === "1";
+      const activity = await studentActivity(studentId, summaryOnly);
+      if (auth.user!.role === "student" && !summaryOnly) {
+        const a = await accessFor(req, auth.user!);
+        activity.mistakes = activity.mistakes.filter((m: any) => subjectOpen(a.rules, m.question.section));
+        activity.savedQuestions = activity.savedQuestions.filter((m: any) => subjectOpen(a.rules, m.question.section));
+      }
+      return json(activity);
     }
 
     // ─────────────── SAVED QUESTIONS ───────────────
@@ -2122,7 +2198,8 @@ export default async (req: Request) => {
         const rows = await db.select({ saved: savedQuestions, question: questions })
           .from(savedQuestions).innerJoin(questions, eq(savedQuestions.questionId, questions.id))
           .where(eq(savedQuestions.studentId, auth.user!.id)).orderBy(desc(savedQuestions.createdAt));
-        return json(rows);
+        const a = await accessFor(req, auth.user!);
+        return json(rows.filter((r) => subjectOpen(a.rules, r.question.section)));
       }
       if (method === "POST") {
         const b = await req.json();
@@ -2344,6 +2421,21 @@ export default async (req: Request) => {
       if (!target) return json({ error: "User not found." }, 404);
       if (action === "ban") {
         const [updated] = await db.update(users).set({ status: "banned", bannedAt: new Date() }).where(eq(users.id, userId)).returning();
+        await db.delete(sessions).where(eq(sessions.userId, userId));
+        return json({ user: publicUser(updated) });
+      }
+      // Admin access is granted and revoked by the verified super admin only.
+      if (action === "grant-admin" || action === "revoke-admin") {
+        if (!isSuperAdmin(auth.user)) return json({ error: "Only the super admin can change administrator access." }, 403);
+        if (target.provider === "admin") return json({ error: "The studio super admin account cannot be changed." }, 400);
+        if (action === "grant-admin") {
+          if (target.role !== "mentor") return json({ error: "Grant admin access to an active mentor account." }, 400);
+          const [updated] = await db.update(users).set({ role: "admin", preferences: { ...(target.preferences || {}), formerRole: "mentor" } }).where(eq(users.id, userId)).returning();
+          await db.delete(sessions).where(eq(sessions.userId, userId));
+          return json({ user: publicUser(updated) });
+        }
+        if (target.role !== "admin") return json({ error: "That account is not an administrator." }, 400);
+        const [updated] = await db.update(users).set({ role: "mentor" }).where(eq(users.id, userId)).returning();
         await db.delete(sessions).where(eq(sessions.userId, userId));
         return json({ user: publicUser(updated) });
       }
