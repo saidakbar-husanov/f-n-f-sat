@@ -152,6 +152,33 @@ export async function handleAccess(req: Request, parts: string[], deps: FullTest
     });
   }
 
+  // Every student's effective access and where it comes from, computed in one
+  // pass (read-only: no snapshots are written here).
+  if (method === "GET" && sub === "students") {
+    const people = await db.select({ id: users.id, displayName: users.displayName, username: users.username, status: users.status })
+      .from(users).where(and(eq(users.role, "student"), inArray(users.status, ["active", "banned", "deactivated"])));
+    const [rules, enrolled] = await Promise.all([
+      db.select().from(accessRules),
+      db.select({ classId: classEnrollments.classId, studentId: classEnrollments.studentId, name: classes.name }).from(classEnrollments)
+        .innerJoin(classes, eq(classEnrollments.classId, classes.id))
+        .where(and(eq(classEnrollments.status, "active"), isNull(classes.deletedAt))),
+    ]);
+    const byKey = new Map(rules.map((r) => [`${r.scope}:${r.targetId}`, r]));
+    const classesOf = new Map<number, { classId: number; name: string }[]>();
+    for (const e of enrolled) classesOf.set(e.studentId, [...(classesOf.get(e.studentId) || []), { classId: e.classId, name: e.name }]);
+    const out = people.map((p) => {
+      const mine = classesOf.get(p.id) || [];
+      const user = byKey.get(`user:${p.id}`), snap = byKey.get(`snapshot:${p.id}`);
+      const classRules: ClassRule[] = mine.map((c) => ({ c, r: byKey.get(`class:${c.classId}`) })).filter((x) => x.r)
+        .map(({ c, r }) => ({ classId: c.classId, name: c.name, preset: isPreset(r!.preset) ? r!.preset : "custom", rules: normalizeRules(r!.rules) }));
+      const res = resolveAccess({ user: user ? normalizeRules(user.rules) : null, classes: classRules, snapshot: snap ? normalizeRules(snap.rules) : null });
+      return { id: p.id, displayName: p.displayName, username: p.username, status: p.status, classes: mine.map((c) => c.name),
+        rules: publicRules(res.rules), source: res.source, conflict: res.conflict, hasOverride: !!user };
+    });
+    out.sort((a, b) => a.displayName.localeCompare(b.displayName));
+    return json({ students: out });
+  }
+
   // One student: override, class settings and the effective result with its source.
   if (method === "GET" && sub === "user" && int(sub2)) {
     const target = int(sub2)!;

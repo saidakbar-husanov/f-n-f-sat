@@ -406,8 +406,9 @@ function plReadLimits(prefix){
   return out;
 }
 async function viewLimits(){
-  crumbs([{label:"Limits Management"}]); loading();
-  let d,users=[]; try{ [d,users]=await Promise.all([api("admin/limits"),api("users")]); }catch(e){ $c().innerHTML=`<div class="empty"><p>${esc(e.message)}</p></div>`; return; }
+  crumbs([{label:"Limits & Access"}]); loading();
+  let d,users=[]; try{ [d,users]=await Promise.all([api("admin/limits"),api("users")]); }catch(e){ if(state.view==="limits") $c().innerHTML=`<div class="empty"><p>${esc(e.message)}</p></div>`; return; }
+  if(state.view!=="limits") return;
   const students=users.filter(u=>u.role==="student");
   $c().innerHTML=`<div class="page-head fade"><h1>Limits &amp; Access</h1><p>Precedence: user override → class limit → platform default. Enter a number, <b>unlimited</b>, or leave blank to inherit. Limits are enforced on the server; changing them never alters past activity.</p></div>
     <div id="fxAccess"><div class="panel"><div class="spin"></div></div></div>
@@ -421,7 +422,7 @@ async function viewLimits(){
     <div class="panel fade"><h2>${svg("profile","ic-sm")} User overrides</h2>
       ${d.users.length?`<table class="mini-table"><thead><tr><th>Student</th><th>Overrides</th><th></th></tr></thead><tbody>${d.users.map(u=>`<tr><td>${esc(u.displayName)}</td><td class="umeta">${Object.entries(u.limits).map(([k,v])=>`${esc(PL_LIMIT_LABEL[k]||k)}: ${v===-1?"unlimited":v}`).join(" · ")}</td><td><button class="btn btn-ghost btn-xs" onclick="PL_userLimits(${u.id},${plJs(u.displayName)})">Edit</button> <button class="btn btn-ghost btn-xs" onclick="PL_clearLimits('user',${u.id})">Remove</button></td></tr>`).join("")}</tbody></table>`:`<p class="umeta">No user overrides.</p>`}
       <div class="f-row" style="margin-top:.8rem"><div class="field"><label>Add an override for</label><select id="plLimUser"><option value="">Choose a student…</option>${students.map(s=>`<option value="${s.id}">${esc(s.displayName)} · ${esc(s.username||s.email||s.phone||"")}</option>`).join("")}</select></div>
-      <div class="field" style="display:flex;align-items:flex-end;gap:.4rem"><button class="btn btn-ghost" onclick="const s=document.getElementById('plLimUser');if(s.value)PL_userLimits(Number(s.value),s.options[s.selectedIndex].text)">Edit limits</button><button class="btn btn-ghost" onclick="const s=document.getElementById('plLimUser');if(s.value)FX_userAccess(Number(s.value))">Subject access</button></div></div></div>`;
+      <div class="field" style="display:flex;align-items:flex-end;gap:.4rem"><button class="btn btn-ghost" onclick="const s=document.getElementById('plLimUser');if(s.value)PL_userLimits(Number(s.value),s.options[s.selectedIndex].text)">Edit limits</button><button class="btn btn-ghost" onclick="const s=document.getElementById('plLimUser');if(s.value)FX_pickStudent(Number(s.value))">Subject access</button></div></div></div>`;
   FX_renderAccess();
 }
 async function PL_savePlatformLimits(){

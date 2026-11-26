@@ -3,12 +3,39 @@
 
 /* ───────── Scrolling: sidebar, reviews, sticky bars ───────── */
 /* The section/settings sidebar scrolls on its own, so its last item is always reachable. */
-.sidebar{height:100vh;height:100dvh;overflow-y:auto;overscroll-behavior-y:contain;scrollbar-gutter:stable}
-.sidebar .user-chip{position:sticky;bottom:0;background:var(--panel);z-index:1}
+/* The sidebar is a fixed-height column: brand on top, the account chip at the
+   bottom, and the section list in between is the one element that scrolls.
+   overscroll-behavior stops wheel/touch scrolling from chaining into the page,
+   so scrolling the list never moves the open review. */
+.sidebar{height:100vh;height:100dvh;overflow:hidden;min-height:0}
+.side-nav{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;margin:0 -.4rem;padding:0 .4rem .4rem;scrollbar-gutter:stable}
+.side-nav:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.sidebar .side-brand,.sidebar .user-chip{flex:none}
 .nav-item[hidden]{display:none}
 @media(max-width:860px){
-  .sidebar{height:100dvh;max-height:100dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:calc(1rem + env(safe-area-inset-bottom))}
+  .sidebar{padding-bottom:calc(1rem + env(safe-area-inset-bottom))}
 }
+/* Two-pane admin editors (Manage Questions, Pages): the left list/settings
+   panel is capped to the viewport under the sticky top bar and scrolls on its
+   own; scrolling it never moves the question being reviewed on the right. */
+@media(min-width:881px){
+  .manage .q-list{display:flex;flex-direction:column;max-height:calc(100vh - 88px - 1rem);max-height:calc(100dvh - 88px - 1rem)}
+  .manage .q-list-head{flex:none}
+  .manage .q-list-body{flex:1 1 auto;min-height:0;max-height:none}
+}
+@media(min-width:881px){ .manage .q-list-body{overscroll-behavior:contain} }
+/* Dialogs: the body is the scroller (header and actions stay visible); the
+   page behind cannot scroll while one is open, and the lock is tied to the
+   dialog being in the DOM, so closing it can never leave the page stuck. */
+html:has(body > .ft-modal-back){overflow:hidden}
+.ft-modal{max-height:calc(100vh - 2rem);max-height:calc(100dvh - 2rem);min-height:0}
+.ft-modal-head,.ft-modal-foot{flex:none}
+.ft-modal-body{flex:1 1 auto;min-height:0;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.ft-modal-back{overscroll-behavior:contain}
+/* A question review inside a dialog flows as one column in the dialog's own
+   scroller, so passage, choices, key, explanation and actions are all reachable. */
+.ft-modal-body .bb.bb-inline .bb-work.split,.ft-modal-body .bb.bb-inline .bb-work.single{max-height:none;min-height:0}
+.ft-modal-body .bb.bb-inline .bb-work.split .bb-pane{max-height:none;overflow:visible}
 /* Sticky top bar never hides a heading or focused control. */
 html{scroll-padding-top:84px;scroll-padding-bottom:84px}
 .explain{overflow-wrap:anywhere}
@@ -50,9 +77,18 @@ html{scroll-padding-top:84px;scroll-padding-bottom:84px}
 .pq-bar>.bb-btn:last-child{justify-self:end}
 .pq-bar .bb-btn:disabled{opacity:.4;cursor:not-allowed;filter:none}
 .pq-bar .bb-btn,.pq-bar .bb-qpill{min-height:44px}
-.pq-pop{position:fixed;left:calc(var(--side) + (100vw - var(--side))/2);bottom:6.2rem;transform:translateX(-50%);max-height:min(70vh,560px);overflow:auto;overscroll-behavior:contain;z-index:45}
-.pq-pop::after{display:none}
-@media(max-width:860px){.pq-pop{left:50%;bottom:5.6rem;width:94vw}}
+/* Numbered picker: anchored above the footer on desktop, a sheet on phones. */
+.pq-layer{position:fixed;inset:0;z-index:130;pointer-events:none}
+.pq-scrim{position:absolute;inset:0;pointer-events:auto;background:transparent}
+.pq-pop{--bb-blue:#3B5BDB;position:fixed;display:flex;flex-direction:column;pointer-events:auto;background:var(--panel);border:1px solid var(--border2);border-radius:var(--r2);box-shadow:var(--shadow);overflow:hidden}
+.pq-pop-head{display:flex;align-items:center;gap:.8rem;padding:.8rem 1rem;border-bottom:1px solid var(--border);flex:none}
+.pq-pop-title{display:flex;flex-direction:column;min-width:0;flex:1}
+.pq-pop-title b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pq-pop-grid{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;display:grid;grid-template-columns:repeat(auto-fill,minmax(46px,1fr));gap:.6rem;padding:1rem 1rem .9rem;scroll-padding:.9rem}
+.pq-pop-grid .bb-cell{min-width:0;height:42px;font-size:.86rem}
+.pq-legend{flex:none;margin:0;padding:.6rem 1rem .75rem;border-top:1px solid var(--border)}
+.pq-layer.sheet .pq-scrim{background:rgba(0,0,0,.5)}
+.pq-layer.sheet .pq-pop{left:0;right:0;bottom:0;width:auto;max-height:min(80dvh,640px);border-radius:var(--r2) var(--r2) 0 0;border-bottom:0;padding-bottom:env(safe-area-inset-bottom)}
 .bb-cell.locked{opacity:.4}
 .bb-cell.picked{border-style:solid;border-color:var(--bb-blue)}
 .bb-cell:focus-visible,.bb-btn:focus-visible,.bb-qpill:focus-visible,.choice:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
@@ -77,6 +113,45 @@ html{scroll-padding-top:84px;scroll-padding-bottom:84px}
 .pf-actions{display:flex;justify-content:space-between;align-items:center;gap:.8rem;flex-wrap:wrap;margin-top:1rem}
 .pf-edit{margin-top:.6rem}.pf-edit>summary{cursor:pointer;font-weight:600;color:var(--ink2);padding:.3rem 0}
 .qb-domlinks{display:flex;flex-wrap:wrap;gap:.35rem;margin:.6rem 0}
+/* Question Bank landing: subject + domain cards, header actions */
+.qb-head{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap}
+.qb-head .page-head{margin-bottom:1.2rem;flex:1 1 320px}
+.qb-actions{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;padding-top:.35rem}
+.qb-actions #qbCont:empty{display:none}
+.qb-badge{display:inline-grid;place-items:center;min-width:1.25rem;height:1.25rem;padding:0 .3rem;border-radius:100px;background:var(--accent);color:var(--accent-ink);font-size:.72rem;font-weight:700}
+.qb-cont-meta{font-family:var(--mono);font-size:.74rem;opacity:.85}
+.qb-applied{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center;margin:-.4rem 0 1.2rem}
+.pf-chip.static{cursor:default}
+.qb-subject{margin-bottom:1.8rem}
+.qb-subhead{display:flex;align-items:center;gap:.8rem;margin-bottom:.8rem}
+.qb-subhead .badge-ic{margin:0;flex:none}
+.qb-subtitle{flex:1;min-width:0}
+.qb-subtitle h2{font-family:var(--disp);font-size:1.3rem;font-weight:800;letter-spacing:-.01em}
+.qb-dom{display:flex;flex-direction:column;cursor:pointer}
+.qb-dom.empty{cursor:default;opacity:.7}
+.qb-dom-go{position:absolute;inset:0;z-index:1;border-radius:inherit;background:transparent}
+.qb-dom-go:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.qb-dom:has(.qb-dom-go:hover:not(:disabled)){transform:translateY(-3px);border-color:var(--accent)}
+.qb-dom-foot{display:flex;justify-content:space-between;align-items:flex-end;margin-top:auto}
+.qb-dom-filter{position:relative;z-index:2;display:grid;place-items:center;width:34px;height:34px;border-radius:9px;border:1px solid var(--border);color:var(--ink3);background:var(--panel)}
+.qb-dom-filter:hover,.qb-dom-filter:focus-visible{color:var(--accent);border-color:var(--accent)}
+/* Filters: popover (desktop) / bottom sheet (phones) */
+.qbf-layer{position:fixed;inset:0;z-index:120;pointer-events:none}
+.qbf-scrim{position:absolute;inset:0;pointer-events:auto;background:transparent}
+.qbf{position:fixed;display:flex;flex-direction:column;pointer-events:auto;background:var(--panel);border:1px solid var(--border2);border-radius:var(--r2);box-shadow:var(--shadow);overflow:hidden}
+.qbf-head{display:flex;align-items:center;gap:.7rem;padding:.75rem 1rem;border-bottom:1px solid var(--border)}
+.qbf-head b{font-family:var(--disp);font-size:1.05rem}
+.qbf-head .umeta{margin-left:auto}
+.qbf-body{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:.9rem 1rem;display:grid;gap:.8rem;align-content:start}
+.qbf-body .pf-panel{gap:.7rem}
+.qbf-body .pf-group{padding:.55rem .7rem}
+.qbf-body .pf-opt{min-height:34px;padding:.32rem .62rem;font-size:.84rem}
+.qbf-shuffle{justify-self:start}
+.qbf-empty{display:flex;gap:.45rem;align-items:flex-start;padding:.6rem .75rem;border-radius:var(--r);background:var(--red-soft);color:var(--ink);font-size:.86rem}
+.qbf-foot{display:flex;gap:.45rem;align-items:center;padding:.7rem 1rem calc(.7rem + env(safe-area-inset-bottom));border-top:1px solid var(--border);background:var(--panel2)}
+.qbf-foot .spacer{flex:1}
+.qbf-layer.sheet .qbf-scrim{background:rgba(0,0,0,.5)}
+.qbf-layer.sheet .qbf{left:0;right:0;bottom:0;top:auto;width:auto;max-height:min(88dvh,760px);border-radius:var(--r2) var(--r2) 0 0;border-bottom:0}
 .qb-list{list-style:none;display:grid;gap:.45rem;margin-top:1rem}
 .qb-row{display:grid;grid-template-columns:2.2rem minmax(0,1fr) auto auto;gap:.8rem;align-items:center;width:100%;text-align:left;padding:.8rem 1rem;background:var(--panel);border:1px solid var(--border);border-radius:var(--r)}
 .qb-row:hover,.qb-row:focus-visible{border-color:var(--accent)}
@@ -141,3 +216,33 @@ html{scroll-padding-top:84px;scroll-padding-bottom:84px}
 .lib-topic{font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--accent);font-weight:700}
 .lib-title{font-family:var(--disp);font-weight:700;font-size:1.1rem}
 .lib-prev{color:var(--ink2);font-size:.9rem;line-height:1.5}
+
+/* ───────── Limits & Access: per-student subject access ───────── */
+.ax-panel .ax-h{font-family:var(--disp);font-size:1.05rem;margin:1.3rem 0 .6rem}
+.ax-pick{display:flex;gap:.8rem;flex-wrap:wrap;align-items:flex-end;margin:.8rem 0}
+.ax-pick .field{flex:1 1 320px;max-width:520px;margin:0}
+.ax-student{border:1px solid var(--border2);border-radius:var(--r2);padding:1rem;background:var(--panel2)}
+.ax-who{display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-bottom:.8rem}
+.ax-eff{display:flex;flex-direction:column;align-items:flex-end;gap:.25rem;text-align:right}
+@media(max-width:640px){.ax-eff{align-items:flex-start;text-align:left}}
+.ax-grid{width:100%;border-collapse:collapse;min-width:420px}
+.ax-grid th,.ax-grid td{padding:.55rem .7rem;border-bottom:1px solid var(--border);text-align:left;vertical-align:middle}
+.ax-grid thead th{font-size:.74rem;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3)}
+.ax-grid tbody th{font-weight:600}
+.ax-master th,.ax-master td{background:var(--panel)}
+.ax-cb input{width:20px;height:20px;accent-color:var(--accent);cursor:pointer}
+.ax-cb input:disabled{opacity:.45;cursor:not-allowed}
+.ax-switch{display:inline-flex;align-items:center;gap:.5rem;cursor:pointer;font-weight:700}
+.ax-switch input{position:absolute;opacity:0;width:1px;height:1px}
+.ax-knob{width:40px;height:22px;border-radius:100px;background:var(--border2);position:relative;transition:background .15s;flex:none}
+.ax-knob::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .15s}
+.ax-switch input:checked+.ax-knob{background:var(--accent)}
+.ax-switch input:checked+.ax-knob::after{transform:translateX(18px)}
+.ax-switch input:focus-visible+.ax-knob{outline:3px solid var(--accent);outline-offset:2px}
+.ax-actions{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin-top:.8rem}
+.ax-status{font-size:.88rem;font-weight:600;display:inline-flex;gap:.35rem;align-items:center}
+.ax-status.ok{color:var(--mint)}.ax-status.err{color:var(--red)}.ax-status.busy{color:var(--ink3)}
+.ax-tools{display:flex;gap:.8rem;align-items:center;flex-wrap:wrap;margin-bottom:.6rem}
+.ax-tools input{flex:1;min-width:200px;max-width:360px;padding:.55rem .8rem;background:var(--panel2);border:1px solid var(--border2);border-radius:var(--r);color:var(--ink);font:inherit;font-size:.9rem}
+.ax-table-wrap{max-height:none}
+.ax-table tr[hidden]{display:none}

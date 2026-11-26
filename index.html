@@ -758,6 +758,7 @@ li[data-list="ordered"]{list-style-type:decimal}
 
 // ---------- icon set (inline SVG, no emoji) ----------
 const I = {
+  funnel:'<path d="M3 5h18l-7 8v6l-4 2v-8z"/>',
   spark:'<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
   bank:'<path d="M3 9 12 4l9 5"/><path d="M5 10v8M19 10v8M9 10v8M15 10v8"/><path d="M3 21h18"/>',
   rush:'<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
@@ -2358,9 +2359,10 @@ function shellHTML(){
         ${brandMark()}<b>${esc(SITE.name)}</b>
         <span class="role-tag ${u.role==="student"?"stu":""}">${u.role}</span>
       </div>
+      <nav class="side-nav" aria-label="${u.role==="admin"?"Studio":u.role==="mentor"?"Mentor workspace":"Practice"} sections">
       <div class="nav-group-label">${u.role==="admin"?"Studio":u.role==="mentor"?"Mentor workspace":"Practice"}</div>
       ${items}
-      <div class="side-spacer"></div>
+      </nav>
       <div class="user-chip">
         <span class="avatar">${avatarInner(u)}</span>
         <div style="min-width:0">
@@ -2415,7 +2417,7 @@ const ROUTE_KEYS={
   bank:["section","category","subcategory","bankStage","bf","bfPage"], practice:["sid","q"], rush:[],
   lessons:["lessonId"], learn:["learnClassId","learnLessonId","learnTab"], review:["reviewType"],
   announcements:["announcementId"], library:["articleId"], testsit:["attemptId"],
-  testedit:["testId"], testreview:["testId"], testpreview:["testId"], settings:["settingsTab"],
+  testedit:["testId"], testreview:["testId"], testpreview:["testId"], settings:["settingsTab"], limits:["accessStudent"],
 };
 const ROUTE_ID={practice:"sid",announcements:"announcementId",library:"articleId",lessons:"lessonId"};
 try{ history.scrollRestoration="manual"; }catch{}
@@ -2460,7 +2462,7 @@ function routeFromUrl(){
   else if(idKey&&segs[2]) next[idKey]=/^\d+$/.test(segs[2])?Number(segs[2]):segs[2];
   if(view==="bank"){
     next.bankStage=segs[2]==="results"?"results":null;
-    const bf={}; for(const fk of ["subjects","difficulties","domains","skills","status"]){ const v=q.get(fk); if(v) bf[fk]=v.split(",").filter(Boolean); }
+    const bf={}; for(const fk of ["subjects","difficulties","domains","skills","status","shuffle"]){ const v=q.get(fk); if(v) bf[fk]=v.split(",").filter(Boolean); }
     next.bf=Object.keys(bf).length?bf:null;
   }
   for(const k of keys){
@@ -2517,6 +2519,11 @@ function routeView(){
   if(state.user?.role==="student"&&STAFF_VIEWS.has(state.view)){ state.view="home"; toast("That page is for admins and mentors."); }
   if(!m[state.view]) state.view=state.user?.role==="admin"?"dashboard":state.user?.role==="mentor"?"classes":"home";
   replaceRoute();
+  // Floating layers belong to the page that opened them.
+  if(state.view!=="bank"&&typeof QB_closeFilters==="function") QB_closeFilters(false);
+  if(typeof PQ_closeNav==="function") PQ_closeNav(false);
+  // A runner/pause scroll lock never outlives the test sitting.
+  if(state.view!=="testsit"){ if(typeof ftExitRunner==="function"&&document.body.classList.contains("bb-on")) ftExitRunner(); document.body.classList.remove("test-paused"); }
   m[state.view]();
 }
 const $c=()=>document.getElementById("content");
@@ -2545,6 +2552,8 @@ async function viewStudentDashboard(){
   crumbs([{label:"Dashboard"}]); loading();
   let activity={periods:{daily:{attempts:0,correct:0,accuracy:0},weekly:{attempts:0,correct:0,accuracy:0},total:{attempts:0,correct:0,accuracy:0}}}, tasks=[], usage={enrolled:false,used:0,limit:20,remaining:20}, openTests=[], vocabTasks=[], examTasks=[], learnOv=null;
   try{ [activity,tasks,usage,openTests,vocabTasks,examTasks,learnOv]=await Promise.all([api("reviews?summary=1"),api("assignments?summary=1"),api("usage"),api("test-session").catch(()=>[]),api("vocab/tasks").catch(()=>[]),api("test-assignments").catch(()=>[]),api("learn/overview").catch(()=>null)]); }catch{}
+  // The student moved on while this loaded: don't paint over the new page.
+  if(state.view!=="home") return;
   VB.tasks=vocabTasks||[];
   const open=tasks.filter(t=>t.completed<t.total).sort((a,b)=>new Date(a.dueAt)-new Date(b.dueAt));
   const next=open[0];
