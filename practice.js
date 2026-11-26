@@ -12,12 +12,13 @@
 //   the latest change is saving, saved or needs a retry.
 
 // ──────────────── subject access (what the interface offers) ────────────────
-const ACC={data:null,at:0};
+const ACC={data:null,at:0,p:null};
 async function loadAccess(force){
   if(state.user?.role!=="student") return null;
   if(ACC.data&&!force&&Date.now()-ACC.at<15000) return ACC.data;
-  try{ ACC.data=await api("access"); ACC.at=Date.now(); }catch{ /* keep the last known */ }
-  return ACC.data;
+  // One request in flight at a time, however many views ask.
+  if(!ACC.p) ACC.p=api("access").then(d=>{ ACC.data=d; ACC.at=Date.now(); return d; }).catch(()=>ACC.data).finally(()=>{ ACC.p=null; });
+  return ACC.p;
 }
 function accSubjects(area){
   if(state.user?.role!=="student") return ["math","ebrw"];
@@ -84,92 +85,216 @@ function toggleFilter(f,k,v,on){
 }
 
 // ──────────────── Question Bank: landing ────────────────
-const QB={draft:null,results:null,resultsKey:"",sessions:null};
+// The landing page shows the subject and domain cards straight away; a domain
+// card starts practice in one click. Filters live in a compact popover (bottom
+// sheet on phones) that is closed by default. There is no results page: both
+// entry paths open the first matching question directly.
+//
+// QB.applied — the filters last used to start practice (kept in the URL so
+//              Back returns here with them); QB.draft — unconfirmed edits in
+//              the open panel (discarded by Escape / Cancel).
+const QB={applied:null,draft:null,open:false,trigger:null,stats:null,statsAt:0,cont:null,starting:false};
+async function qbStats(){
+  if(QB.stats&&Date.now()-QB.statsAt<60000) return QB.stats;
+  QB.stats=await getStats(true); QB.statsAt=Date.now(); return QB.stats;
+}
 async function viewBank(){
   crumbs([{label:"Question Bank"}]);
+  QB_closeFilters(false);
+  // Paint straight away from what is already known; counts fill in after.
+  const statsP=qbStats();
+  if(!ACC.data&&state.user?.role==="student") loading();
   await loadAccess();
+  if(state.view!=="bank") return;
   if(state.user?.role==="student"&&!accSubjects("bank").length){ $c().innerHTML=lockedHTML("Question Bank practice"); return; }
-  // Legacy domain links (?section=…&category=…) open the filtered results.
-  if(state.section&&!state.bankStage){
-    const bf=blankBankFilters(); bf.subjects=[state.section]; if(state.category) bf.domains=[state.category]; if(state.subcategory) bf.skills=[state.subcategory];
-    go("bank",{bankStage:"results",bf,section:null,category:null,subcategory:null,__replace:true}); return;
+  // Old links: /bank/results?… and ?section=…&category=… now land here with
+  // those filters applied (the results page is gone).
+  if(state.bankStage==="results"||state.section){
+    const bf=state.bf?{...blankBankFilters(),...state.bf}:blankBankFilters();
+    if(state.section){ bf.subjects=[state.section]; if(state.category) bf.domains=[state.category]; if(state.subcategory) bf.skills=[state.subcategory]; }
+    Object.assign(state,{bankStage:null,section:null,category:null,subcategory:null,bf:activeFilterCount(bf)?bf:null});
+    replaceRoute();
   }
-  if(state.bankStage==="results") return viewBankResults();
-  QB.draft=cleanFilters(QB.draft||state.bf||blankBankFilters(),{area:"bank",status:true});
-  $c().innerHTML=`<div class="page-head fade"><h1>Question Bank</h1><p>Choose what to practise. Pick several options in a group to widen it; each group narrows the others.</p></div>
-    <div id="qbContinue"></div>
-    <div class="panel fade"><h2>${svg("target","ic-sm")} Filters</h2><div id="qbFilters">${filterPanelHTML(QB.draft,{area:"bank",status:true,setter:"QB_set"})}</div>
-      <div id="qbChips">${chipsHTML(QB.draft,"QB_set")}</div>
-      <div class="pf-actions"><span class="umeta" id="qbCount">Counting…</span><button class="btn btn-primary" id="qbShow" onclick="QB_showResults()">${svg("arr","ic-sm")} Show questions</button></div></div>
-    <div class="tile-grid tg-2 fade" id="secGrid"></div>`;
-  renderContinue("bank","qbContinue");
-  QB_count();
-  const stats=await getStats();
-  const grid=document.getElementById("secGrid"); if(!grid) return;
-  grid.innerHTML=accSubjects("bank").map(k=>{ const s=SECTIONS[k]; const c=countFor(stats,k);
-    return `<div class="tile"><span class="count">${c} item${c===1?"":"s"}</span><div class="badge-ic ${s.tone}">${svg(s.icon)}</div><h3>${s.label}</h3><p>${s.blurb}</p>
-      <div class="qb-domlinks">${s.categories.map(cat=>`<button type="button" class="btn btn-ghost btn-xs" onclick="QB_quick('${k}',${plJs(cat)})">${esc(cat)} · ${countFor(stats,k,cat)}</button>`).join("")}</div>
-      <button class="btn btn-ghost btn-sm" onclick="QB_quick('${k}',null)">All ${s.label} ${svg("arr","ic-sm")}</button></div>`;
-  }).join("");
+  QB.applied=cleanFilters(state.bf||blankBankFilters(),{area:"bank",status:true});
+  QB.applied.shuffle=!!state.bf?.shuffle?.length;
+  const subs=accSubjects("bank");
+  $c().innerHTML=`<div class="qb-head fade">
+      <div class="page-head"><h1>Question Bank</h1><p>Pick a domain to start practising right away, or use Filters to combine subjects, difficulty, topics and your answer history.</p></div>
+      <div class="qb-actions" id="qbActions"><span id="qbCont"></span>
+        <button type="button" class="btn btn-ghost btn-sm qb-filter-btn" id="qbFilterBtn" aria-haspopup="dialog" aria-expanded="false" onclick="QB_openFilters(this)">${svg("funnel","ic-sm")} Filters${activeFilterCount(QB.applied)?` <span class="qb-badge">${activeFilterCount(QB.applied)}</span>`:""}</button></div>
+    </div>
+    ${activeFilterCount(QB.applied)?`<div class="qb-applied fade" aria-label="Last applied filters"><span class="umeta">Last filters:</span>${appliedChipsHTML(QB.applied)}<button type="button" class="btn btn-primary btn-xs" onclick="QB_startWith(QB.applied)">${svg("rush","ic-sm")} Practise again</button><button type="button" class="btn btn-ghost btn-xs" onclick="QB_clearApplied()">Clear</button></div>`:""}
+    <div id="qbCards">${subs.map(k=>qbSubjectHTML(k,null)).join("")}</div>`;
+  QB_renderContinue();
+  const stats=await statsP;
+  if(state.view!=="bank") return;
+  const host=document.getElementById("qbCards"); if(host) host.innerHTML=subs.map(k=>qbSubjectHTML(k,stats)).join("");
 }
-function QB_set(k,v,on){
+// The original subject + domain cards.
+function qbSubjectHTML(k,stats){
+  const s=SECTIONS[k]; if(!s) return "";
+  const n=c=>stats?countFor(stats,k,c):null;
+  const total=stats?countFor(stats,k):null;
+  return `<section class="qb-subject fade" aria-labelledby="qbS_${k}">
+    <div class="qb-subhead"><div class="badge-ic ${s.tone}">${svg(s.icon)}</div><div class="qb-subtitle"><h2 id="qbS_${k}">${esc(s.label)}</h2><p class="umeta">${esc(s.blurb)}${total!=null?` · ${total} question${total===1?"":"s"}`:""}</p></div>
+      <button type="button" class="btn btn-ghost btn-xs" onclick="QB_openFilters(this,{subjects:['${k}']})" aria-label="Filter ${esc(s.label)} questions">${svg("funnel","ic-sm")} Filter</button></div>
+    <div class="tile-grid tg-2">${s.categories.map(cat=>{ const c=n(cat);
+      return `<div class="tile qb-dom ${c===0?"empty":""}"><button type="button" class="qb-dom-go" onclick="QB_startDomain('${k}',${plJs(cat)})" ${c===0?"disabled":""} aria-label="Start practice: ${esc(cat)}${c!=null?`, ${c} questions`:""}"></button>
+        <span class="count">${c==null?"…":`${c} item${c===1?"":"s"}`}</span>
+        <div class="badge-ic ${s.tone}">${svg("target")}</div>
+        <h3>${esc(cat)}</h3><p>${esc(CAT_BLURB[cat]||"")}</p>
+        <div class="qb-dom-foot"><span class="arr">${c===0?"No questions yet":`Start practice ${svg("arr","ic-sm")}`}</span>
+          <button type="button" class="qb-dom-filter" onclick="event.stopPropagation();QB_openFilters(this,{subjects:['${k}'],domains:[${plJs(cat)}]})" aria-label="Filter ${esc(cat)}" title="Filter this domain">${svg("funnel","ic-sm")}</button></div></div>`; }).join("")}</div>
+  </section>`;
+}
+function appliedChipsHTML(f){
+  const out=[]; f.subjects.forEach(v=>out.push(SUBJECT_LABEL[v]||v)); f.difficulties.forEach(v=>out.push(BAND_LABEL[v])); f.domains.forEach(v=>out.push(v)); f.skills.forEach(v=>out.push(v)); (f.status||[]).forEach(v=>out.push(STATUS_LABEL[v]));
+  return out.map(l=>`<span class="pf-chip static">${esc(l)}</span>`).join("");
+}
+function QB_clearApplied(){ state.bf=null; replaceRoute(); viewBank(); }
+async function QB_renderContinue(){
+  let rows=[]; try{ rows=await api("practice/sessions?kind=bank"); }catch{ return; }
+  QB.cont=rows;
+  const el=document.getElementById("qbCont"); if(!el||state.view!=="bank") return;
+  if(!rows.length){ el.innerHTML=""; return; }
+  const s=rows[0];
+  el.innerHTML=`<button type="button" class="btn btn-primary btn-sm qb-cont" onclick="resumeSession(${s.id})" title="${esc(s.label)} · question ${s.position+1} of ${s.total} · ${s.answered} answered">${svg("play","ic-sm")} Continue practice <span class="qb-cont-meta">${s.position+1}/${s.total}</span></button>`;
+}
+
+// ── filter panel (popover on desktop, bottom sheet on phones) ──
+const qbSheet=()=>window.matchMedia("(max-width:760px)").matches;
+function QB_openFilters(trigger,context){
+  if(QB.open) QB_closeFilters(false);
+  const base={...blankBankFilters(),...(QB.applied||blankBankFilters())};
+  // Opened from a subject or domain: preselect that context.
+  if(context){ Object.assign(base,blankBankFilters(),{subjects:context.subjects||[],domains:context.domains||[]}); }
+  QB.draft=cleanFilters(base,{area:"bank",status:true});
+  QB.draft.shuffle=!context&&!!QB.applied?.shuffle;
+  QB.open=true; QB.trigger=trigger||document.getElementById("qbFilterBtn");
+  document.getElementById("qbFilterBtn")?.setAttribute("aria-expanded","true");
+  const el=document.createElement("div");
+  el.id="qbFilterLayer"; el.className="qbf-layer"+(qbSheet()?" sheet":"");
+  el.innerHTML=`<div class="qbf-scrim" onclick="QB_closeFilters(true)"></div>
+    <div class="qbf" id="qbf" role="dialog" aria-modal="${qbSheet()}" aria-labelledby="qbfTitle">
+      <div class="qbf-head"><b id="qbfTitle">Filters</b><span class="umeta" id="qbfCount" role="status" aria-live="polite">Counting…</span>
+        <button type="button" class="btn btn-ghost btn-xs" onclick="QB_closeFilters(true)" aria-label="Close filters">${svg("x","ic-sm")}</button></div>
+      <div class="qbf-body" id="qbfBody"></div>
+      <div class="qbf-foot"><button type="button" class="btn btn-ghost btn-sm" onclick="QB_draftSet('*',null,false)">Clear all</button><span class="spacer"></span>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="QB_closeFilters(true)">Cancel</button>
+        <button type="button" class="btn btn-primary btn-sm" id="qbfStart" onclick="QB_startFiltered()">${svg("rush","ic-sm")} Start practice</button></div>
+    </div>`;
+  document.body.appendChild(el);
+  QB_paintDraft();
+  QB_place();
+  setTimeout(()=>el.querySelector(".qbf-body input, .qbf-body summary")?.focus(),0);
+}
+function QB_paintDraft(){
+  const body=document.getElementById("qbfBody"); if(!body) return;
+  const keep=body.scrollTop;
+  body.innerHTML=filterPanelHTML(QB.draft,{area:"bank",status:true,setter:"QB_draftSet"})+
+    `<label class="pf-opt qbf-shuffle ${QB.draft.shuffle?"on":""}"><input type="checkbox" ${QB.draft.shuffle?"checked":""} onchange="QB.draft.shuffle=this.checked;this.parentElement.classList.toggle('on',this.checked)"/><span>Shuffle question order</span></label>`;
+  body.scrollTop=keep;
+  QB_count();
+}
+function QB_draftSet(k,v,on){
+  const shuffle=!!QB.draft?.shuffle;
   QB.draft=cleanFilters(toggleFilter(QB.draft,k,v,on),{area:"bank",status:true});
-  document.getElementById("qbFilters").innerHTML=filterPanelHTML(QB.draft,{area:"bank",status:true,setter:"QB_set"});
-  document.getElementById("qbChips").innerHTML=chipsHTML(QB.draft,"QB_set");
-  QB_count();
+  QB.draft.shuffle=k==="*"?false:shuffle;
+  // Keep focus on the option that was just toggled.
+  const focusKey=document.activeElement?.closest?.(".pf-opt")?.textContent?.trim();
+  QB_paintDraft();
+  if(focusKey) [...document.querySelectorAll("#qbfBody .pf-opt")].find(l=>l.textContent.trim()===focusKey)?.querySelector("input")?.focus();
 }
+// Desktop: anchored under its trigger, clamped to the viewport.
+function QB_place(){
+  const layer=document.getElementById("qbFilterLayer"), box=document.getElementById("qbf"); if(!layer||!box) return;
+  const sheet=qbSheet(); layer.classList.toggle("sheet",sheet); box.setAttribute("aria-modal",String(sheet));
+  if(sheet){ box.style.cssText=""; return; }
+  const t=QB.trigger&&document.body.contains(QB.trigger)?QB.trigger:document.getElementById("qbFilterBtn");
+  const r=t?.getBoundingClientRect()||{bottom:80,right:innerWidth-16,left:innerWidth-400};
+  const w=Math.min(560,innerWidth-24);
+  let left=Math.min(Math.max(12,r.right-w),innerWidth-w-12);
+  let top=r.bottom+8;
+  const spaceBelow=innerHeight-top-12;
+  if(spaceBelow<320&&r.top>spaceBelow){ top=Math.max(12,r.top-8-Math.min(620,r.top-20)); }
+  box.style.cssText=`left:${left}px;top:${top}px;width:${w}px;max-height:${Math.max(240,innerHeight-top-12)}px`;
+}
+window.addEventListener("resize",()=>{ if(QB.open) QB_place(); });
+window.addEventListener("scroll",()=>{ if(QB.open&&!qbSheet()) QB_place(); },{passive:true});
+function QB_closeFilters(restoreFocus){
+  if(!QB.open){ document.getElementById("qbFilterLayer")?.remove(); return; }
+  QB.open=false; QB.draft=null; clearTimeout(qbCountT); qbCountSeq++;
+  document.getElementById("qbFilterLayer")?.remove();
+  document.getElementById("qbFilterBtn")?.setAttribute("aria-expanded","false");
+  const t=QB.trigger; QB.trigger=null;
+  if(restoreFocus&&t&&document.body.contains(t)) t.focus();
+}
+document.addEventListener("keydown",e=>{
+  if(!QB.open) return;
+  if(e.key==="Escape"){ e.preventDefault(); e.stopPropagation(); QB_closeFilters(true); return; }
+  // Keep Tab inside the panel while it is open.
+  if(e.key==="Tab"){
+    const box=document.getElementById("qbf"); if(!box) return;
+    const f=[...box.querySelectorAll("button:not([disabled]),input:not([disabled]),summary,[tabindex]:not([tabindex='-1'])")].filter(x=>x.offsetParent!==null);
+    if(!f.length) return;
+    if(e.shiftKey&&document.activeElement===f[0]){ e.preventDefault(); f[f.length-1].focus(); }
+    else if(!e.shiftKey&&document.activeElement===f[f.length-1]){ e.preventDefault(); f[0].focus(); }
+  }
+},true);
 let qbCountT=null, qbCountSeq=0;
 function QB_count(){
   clearTimeout(qbCountT);
+  const el=document.getElementById("qbfCount"); if(el) el.textContent="Counting…";
   qbCountT=setTimeout(async()=>{
-    const seq=++qbCountSeq, el=document.getElementById("qbCount"); if(!el) return;
-    el.textContent="Counting…";
-    try{ const r=await api(`practice/pool?${filterQuery(QB.draft)}&pageSize=5`); if(seq!==qbCountSeq) return;
-      el.textContent=`${r.count} matching question${r.count===1?"":"s"}`; const b=document.getElementById("qbShow"); if(b) b.disabled=!r.count; }
-    catch(e){ if(seq===qbCountSeq) el.textContent=e.message; }
-  },250);
+    const seq=++qbCountSeq;
+    try{ const r=await api(`practice/pool?${filterQuery(QB.draft)}&pageSize=5`); if(seq!==qbCountSeq||!QB.open) return;
+      const c=document.getElementById("qbfCount"); if(c) c.textContent=`${r.count} matching question${r.count===1?"":"s"}`;
+      const b=document.getElementById("qbfStart"); if(b) b.disabled=!r.count;
+      QB.draftCount=r.count; QB_emptyNote(!r.count);
+    }catch(e){ if(seq===qbCountSeq){ const c=document.getElementById("qbfCount"); if(c) c.textContent=e.message; } }
+  },220);
 }
-function QB_showResults(){ go("bank",{bankStage:"results",bf:{...QB.draft}}); }
-function QB_quick(section,domain){ const bf=blankBankFilters(); bf.subjects=[section]; if(domain) bf.domains=[domain]; QB.draft=bf; go("bank",{bankStage:"results",bf}); }
-
-// ──────────────── Question Bank: filtered results ────────────────
-async function viewBankResults(){
-  const f=cleanFilters(state.bf||blankBankFilters(),{area:"bank",status:true});
-  QB.draft=f;
-  const page=Number(state.bfPage)||0;
-  crumbs([{label:"Question Bank",onclick:"go('bank')"},{label:"Results"}]);
-  const key=filterQuery(f)+"|"+page;
-  const cached=QB.results&&QB.resultsKey===key&&Date.now()-QB.results.at<120000;
-  if(!cached) loading();
-  let r=cached?QB.results.data:null;
-  if(!r){ try{ r=await api(`practice/pool?${filterQuery(f)}&page=${page}&pageSize=25`); QB.results={data:r,at:Date.now()}; QB.resultsKey=key; }catch(e){ $c().innerHTML=`<div class="empty"><p>${esc(e.message)}</p><button class="btn btn-ghost" onclick="go('bank')">Back</button></div>`; return; } }
-  if(state.view!=="bank"||state.bankStage!=="results") return;
-  const pages=Math.max(1,Math.ceil(r.count/r.pageSize));
-  const rows=r.items.map((q,i)=>{ const [dl,dc]=DIFF[q.difficulty]||DIFF[3];
-    return `<li><button type="button" class="qb-row" onclick="QB_open(${q.id})"><span class="qb-n">${page*r.pageSize+i+1}</span>
-      <span class="qb-main"><span class="qb-prev">${esc(q.preview||"Question")}</span><span class="umeta">${esc(SUBJECT_LABEL[q.section]||q.section)} · ${esc(q.category)}${q.subcategory?` · ${esc(q.subcategory)}`:""}</span></span>
-      <span class="pill ${dc}">${dl}</span><span class="qb-st ${q.status}">${q.status==="correct"?"Correct before":q.status==="incorrect"?"Incorrect before":"New"}</span></button></li>`; }).join("");
-  $c().innerHTML=`<div class="page-head fade"><h1>Question Bank results</h1><p>${r.count} question${r.count===1?"":"s"} match. Open any question to start practising from it, or start the whole set.</p></div>
-    <div class="panel fade"><div id="qbChips">${chipsHTML(f,"QBR_set")}</div>
-      <details class="pf-edit"><summary>${svg("edit","ic-sm")} Change filters</summary>${filterPanelHTML(f,{area:"bank",status:true,setter:"QBR_set"})}</details>
-      <div class="pf-actions"><label class="pf-opt"><input type="checkbox" id="qbShuffle"/> <span>Shuffle order</span></label>
-      <button class="btn btn-primary" ${r.count?"":"disabled"} onclick="QB_startAll()">${svg("rush","ic-sm")} Practise all ${r.count}</button></div></div>
-    ${r.count?`<ol class="qb-list fade">${rows}</ol>
-      ${pages>1?`<div class="qb-pager"><button class="btn btn-ghost btn-sm" ${page<=0?"disabled":""} onclick="QBR_page(${page-1})">Previous page</button><span class="umeta">Page ${page+1} of ${pages}</span><button class="btn btn-ghost btn-sm" ${page+1>=pages?"disabled":""} onclick="QBR_page(${page+1})">Next page</button></div>`:""}`
-    :`<div class="empty fade"><div class="ei">${svg("target")}</div><h3>No questions match</h3><p>Try removing a filter — for example a topic, a difficulty or “${esc(STATUS_LABEL.incorrect)}”.</p>${activeFilterCount(f)?`<button class="btn btn-ghost" onclick="QBR_set('*',null,false)">Clear all filters</button>`:""}</div>`}`;
+function QB_emptyNote(show){
+  const body=document.getElementById("qbfBody"); if(!body) return;
+  let n=document.getElementById("qbfEmpty");
+  if(!show){ n?.remove(); return; }
+  if(!n){ n=document.createElement("p"); n.id="qbfEmpty"; n.className="qbf-empty"; n.setAttribute("role","alert"); body.prepend(n); }
+  n.innerHTML=`${svg("info","ic-sm")} No questions match. Remove a filter — for example a topic, a difficulty or “${esc(STATUS_LABEL.incorrect)}”.`;
 }
-// Filter edits on the results page replace the current history entry.
-function QBR_set(k,v,on){ const bf=cleanFilters(toggleFilter(QB.draft,k,v,on),{area:"bank",status:true}); state.bf=bf; state.bfPage=0; replaceRoute(); viewBankResults(); }
-function QBR_page(p){ rememberScroll(); state.bfPage=p; replaceRoute(); viewBankResults().then(()=>window.scrollTo(0,0)); }
 function newClientKey(){ return (crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2)); }
-async function QB_startAll(startQuestionId){
-  const shuffle=!!document.getElementById("qbShuffle")?.checked&&!startQuestionId;
+// Start a Question Bank session and open its first question. The landing
+// page's history entry is updated first (applied filters + scroll), so Back
+// returns to exactly this view.
+async function QB_startWith(filters,opts={}){
+  if(QB.starting) return false;
+  const f=cleanFilters(filters,{area:"bank",status:true});
+  const shuffle=!!filters.shuffle;
+  QB.starting=true;
+  const btn=opts.button; const label=btn?.innerHTML; if(btn){ btn.disabled=true; btn.textContent="Starting…"; }
   try{
-    const s=await api("practice/sessions",{method:"POST",body:JSON.stringify({kind:"bank",filters:state.bf||QB.draft,shuffle,startQuestionId:startQuestionId||null,clientKey:newClientKey()})});
-    QB.sessions=null; openSession(s);
-  }catch(e){ toast(e.message); }
+    const s=await api("practice/sessions",{method:"POST",body:JSON.stringify({kind:"bank",filters:f,shuffle,clientKey:newClientKey()})});
+    if(opts.remember!==false){ state.bf=activeFilterCount(f)||shuffle?{...f,...(shuffle?{shuffle:["1"]}:{})}:null; replaceRoute(); }
+    QB_closeFilters(false);
+    openSession(s);
+    return true;
+  }catch(e){
+    if(btn){ btn.disabled=false; btn.innerHTML=label; }
+    if(e.data?.count===0||/No questions match/i.test(e.message||"")){ if(QB.open) QB_emptyNote(true); else toast("No questions match yet."); }
+    else toast(e.message||"Could not start practice.");
+    return false;
+  }finally{ QB.starting=false; }
 }
-function QB_open(id){ QB_startAll(id); }
+function QB_startFiltered(){
+  if(!QB.draft) return;
+  if(QB.draftCount===0){ QB_emptyNote(true); return; }   // keep the panel open to adjust
+  QB_startWith({...QB.draft},{button:document.getElementById("qbfStart")});
+}
+function QB_startDomain(section,domain){
+  const f=blankBankFilters(); f.subjects=[section]; f.domains=[domain];
+  QB_startWith(f,{remember:false});
+}
+// Kept for old callers.
+function QB_quick(section,domain){ if(domain) QB_startDomain(section,domain); else { const f=blankBankFilters(); f.subjects=[section]; QB_startWith(f,{remember:false}); } }
 
 // ──────────────── Continue practice ────────────────
 async function renderContinue(kind,elId){
@@ -350,41 +475,119 @@ function practiceFrameHTML(inner){
     ${inner}
     <nav class="pq-bar" aria-label="Question navigation">
       <button type="button" class="bb-btn" id="pqPrev" onclick="PQ_go(${P.idx-1})" ${P.idx<=0?"disabled":""}>Previous</button>
-      <button type="button" class="bb-qpill" id="pqPill" onclick="PQ_toggleNav()" aria-expanded="${!!P.nav}" aria-controls="pqPop">Question ${P.idx+1} of ${total} ${typeof ftIcon==="function"?ftIcon("chev"):""}</button>
+      <button type="button" class="bb-qpill" id="pqPill" onclick="PQ_toggleNav()" aria-haspopup="dialog" aria-expanded="false" aria-controls="pqPop">Question ${P.idx+1} of ${total} ${typeof ftIcon==="function"?ftIcon("chev"):""}</button>
       ${last?`<button type="button" class="bb-btn primary" onclick="PQ_finish()">Finish</button>`:`<button type="button" class="bb-btn primary" id="pqNext" onclick="PQ_go(${P.idx+1})">Next</button>`}
     </nav>
-    ${P.nav?pqPopHTML():""}
   </div>`;
 }
-function pqPopHTML(){
-  const answered=P.items.filter(i=>i.submitted||i.result||(P.results&&P.results[i.id])).length;
-  return `<div class="bb-pop pq-pop" id="pqPop" role="dialog" aria-label="Question navigator"><div class="bb-pop-head"><b>${esc(P.label)}</b><span class="umeta">${answered} of ${P.items.length} answered</span>
-    <button type="button" class="btn btn-ghost btn-xs" onclick="PQ_toggleNav()" aria-label="Close">${svg("x","ic-sm")}</button></div>
-    <div class="bb-grid">${P.items.map((x,i)=>{ const ans=!!(x.submitted||x.result||(P.results&&P.results[x.id])), cur=i===P.idx, sel=!ans&&x.selected!=null&&x.selected!=="";
-      return `<button type="button" class="bb-cell ${ans?"ans":""} ${x.flagged?"flag":""} ${cur?"cur":""} ${x.locked?"locked":""} ${sel?"picked":""}" onclick="PQ_jump(${i})" aria-label="Question ${i+1}${ans?", answered":sel?", answer chosen, not checked":", unanswered"}${x.flagged?", marked for review":""}${x.locked?", not available":""}${cur?", current":""}" ${cur?'aria-current="true"':""}>
-        ${cur?`<i class="bb-pin"></i>`:""}${i+1}${x.flagged?`<span class="bb-flagdot">${typeof ftIcon==="function"?ftIcon("bookmark"):""}</span>`:""}</button>`; }).join("")}</div>
-    <div class="bb-legend"><span><i class="lg cur"></i>Current</span><span><i class="lg un"></i>Unanswered</span><span><i class="lg ans"></i>Answered</span><span><i class="lg flag"></i>For Review</span></div></div>`;
+// ── numbered question picker ──
+// Rendered into <body> (outside the animated question frame, whose transform
+// would otherwise trap a fixed element and clip it). Desktop: anchored above
+// the footer bar and constrained to the viewport. Phones: a bottom sheet. The
+// header (title, answered count, close) and legend stay put while the grid
+// scrolls; the grid wraps, so every number is reachable without sideways
+// scrolling.
+const pqAnswered=x=>!!(x.submitted||x.result||(P.results&&P.results[x.id]));
+const pqIsSheet=()=>window.matchMedia("(max-width:760px)").matches;
+function pqCellHTML(x,i){
+  const ans=pqAnswered(x), cur=i===P.idx, sel=!ans&&x.selected!=null&&x.selected!=="";
+  return `<button type="button" class="bb-cell ${ans?"ans":""} ${x.flagged?"flag":""} ${cur?"cur":""} ${x.locked?"locked":""} ${sel?"picked":""}" data-i="${i}" tabindex="${cur?0:-1}" onclick="PQ_jump(${i})" aria-label="Question ${i+1}${ans?", answered":sel?", answer chosen, not checked":", unanswered"}${x.flagged?", marked for review":""}${x.locked?", not available":""}${cur?", current":""}" ${cur?'aria-current="true"':""}>${cur?`<i class="bb-pin" aria-hidden="true"></i>`:""}${i+1}${x.flagged?`<span class="bb-flagdot" aria-hidden="true">${typeof ftIcon==="function"?ftIcon("bookmark"):""}</span>`:""}</button>`;
 }
-function PQ_toggleNav(){ P.nav=!P.nav; const old=document.getElementById("pqPop"); if(old) old.remove(); if(P.nav){ document.querySelector(".pq")?.insertAdjacentHTML("beforeend",pqPopHTML()); document.querySelector("#pqPop .bb-cell.cur")?.focus(); } document.getElementById("pqPill")?.setAttribute("aria-expanded",String(!!P.nav)); }
-function PQ_jump(i){ P.nav=false; PQ_go(i); setTimeout(()=>document.getElementById("pqPill")?.focus(),0); }
+function pqPopHTML(){
+  const answered=P.items.filter(pqAnswered).length;
+  return `<div class="pq-scrim" onclick="PQ_closeNav(true)"></div>
+  <div class="pq-pop" id="pqPop" role="dialog" aria-modal="true" aria-labelledby="pqPopTitle">
+    <div class="pq-pop-head"><div class="pq-pop-title"><b id="pqPopTitle">${esc(P.label)}</b><span class="umeta" id="pqPopCount">${answered} of ${P.items.length} answered</span></div>
+      <button type="button" class="btn btn-ghost btn-xs" onclick="PQ_closeNav(true)" aria-label="Close question picker">${svg("x","ic-sm")}</button></div>
+    <div class="pq-pop-grid" id="pqGrid" role="group" aria-label="Questions">${P.items.map(pqCellHTML).join("")}</div>
+    <div class="bb-legend pq-legend"><span><i class="lg cur"></i>Current</span><span><i class="lg un"></i>Unanswered</span><span><i class="lg ans"></i>Answered</span><span><i class="lg flag"></i>For Review</span></div></div>`;
+}
+function PQ_placeNav(){
+  const layer=document.getElementById("pqLayer"), pop=document.getElementById("pqPop"); if(!layer||!pop) return;
+  const sheet=pqIsSheet(); layer.classList.toggle("sheet",sheet);
+  if(sheet){ pop.style.cssText=""; return; }
+  const bar=document.querySelector(".pq-bar"), pill=document.getElementById("pqPill");
+  const br=bar?.getBoundingClientRect(), pr=pill?.getBoundingClientRect();
+  const w=Math.min(600,innerWidth-24);
+  const center=pr?pr.left+pr.width/2:innerWidth/2;
+  const left=Math.min(Math.max(12,center-w/2),innerWidth-w-12);
+  // Bottom edge just above the footer bar (or the viewport bottom when the bar is off-screen).
+  const barTop=br&&br.top>0&&br.top<innerHeight?br.top:innerHeight-12;
+  const bottom=Math.max(12,innerHeight-barTop+10);
+  const topbar=document.querySelector(".topbar")?.getBoundingClientRect().bottom||0;
+  const maxH=Math.max(220,innerHeight-bottom-Math.max(12,topbar+8));
+  pop.style.cssText=`left:${left}px;bottom:${bottom}px;width:${w}px;max-height:${maxH}px`;
+}
+function PQ_openNav(){
+  if(!P) return;
+  PQ_closeNav(false);
+  P.nav=true;
+  const layer=document.createElement("div"); layer.id="pqLayer"; layer.className="pq-layer";
+  layer.innerHTML=pqPopHTML();
+  document.body.appendChild(layer);
+  PQ_placeNav();
+  document.getElementById("pqPill")?.setAttribute("aria-expanded","true");
+  // Show the current question straight away and focus its number.
+  const grid=document.getElementById("pqGrid"), cur=grid?.querySelector(".bb-cell.cur");
+  if(grid&&cur){ grid.scrollTop=Math.max(0,cur.offsetTop-grid.clientHeight/2+cur.offsetHeight/2); cur.focus({preventScroll:true}); }
+}
+function PQ_closeNav(restoreFocus){
+  const had=!!document.getElementById("pqLayer");
+  document.getElementById("pqLayer")?.remove();
+  if(P) P.nav=false;
+  document.getElementById("pqPill")?.setAttribute("aria-expanded","false");
+  if(had&&restoreFocus) document.getElementById("pqPill")?.focus();
+}
+function PQ_toggleNav(){ if(document.getElementById("pqLayer")) PQ_closeNav(true); else PQ_openNav(); }
+// Re-paint the open picker (after an answer is checked) without moving its scroll.
+function PQ_refreshNav(){
+  const grid=document.getElementById("pqGrid"); if(!grid||!P) return;
+  const st=grid.scrollTop, focused=document.activeElement?.dataset?.i;
+  grid.innerHTML=P.items.map(pqCellHTML).join("");
+  grid.scrollTop=st;
+  const c=document.getElementById("pqPopCount"); if(c) c.textContent=`${P.items.filter(pqAnswered).length} of ${P.items.length} answered`;
+  if(focused!=null) grid.querySelector(`[data-i="${focused}"]`)?.focus({preventScroll:true});
+}
+function PQ_jump(i){ PQ_closeNav(false); PQ_go(i); setTimeout(()=>document.getElementById("pqPill")?.focus({preventScroll:true}),0); }
 function PQ_go(i){
   if(!P||i<0||i>=P.items.length) return;
-  P.idx=i; P.nav=false;
+  PQ_closeNav(false);
+  P.idx=i;
   if(P.server) PQ_queue({position:i});
-  renderQuestion(); document.querySelector(".pq")?.scrollIntoView({block:"start"});
+  renderQuestion();
   window.scrollTo(0,0);
 }
-// Escape closes the navigator, as in the Full Mock runner.
+window.addEventListener("resize",()=>{ if(document.getElementById("pqLayer")) PQ_placeNav(); });
+window.addEventListener("scroll",()=>{ if(document.getElementById("pqLayer")&&!pqIsSheet()) PQ_placeNav(); },{passive:true});
+// Escape closes the picker and returns focus to "Question X of Y"; arrow keys,
+// Home and End move between numbers.
 function wirePracticeKeys(){}
 document.addEventListener("keydown",e=>{
   if(state.view!=="practice"||!P) return;
-  if(e.key==="Escape"&&P.nav){ e.preventDefault(); PQ_toggleNav(); document.getElementById("pqPill")?.focus(); }
+  const layer=document.getElementById("pqLayer");
+  if(layer){
+    if(e.key==="Escape"){ e.preventDefault(); e.stopPropagation(); PQ_closeNav(true); return; }
+    const cell=e.target.closest?.("#pqGrid .bb-cell");
+    if(cell&&["ArrowRight","ArrowLeft","ArrowDown","ArrowUp","Home","End"].includes(e.key)){
+      const cells=[...document.querySelectorAll("#pqGrid .bb-cell")], i=cells.indexOf(cell);
+      const cols=Math.max(1,Math.round(document.getElementById("pqGrid").clientWidth/(cell.offsetWidth+8)));
+      const step={ArrowRight:1,ArrowLeft:-1,ArrowDown:cols,ArrowUp:-cols}[e.key];
+      const n=e.key==="Home"?0:e.key==="End"?cells.length-1:Math.min(cells.length-1,Math.max(0,i+step));
+      e.preventDefault(); cells[i].tabIndex=-1; cells[n].tabIndex=0; cells[n].focus(); return;
+    }
+    if(e.key==="Tab"){
+      const pop=document.getElementById("pqPop");
+      const f=[pop.querySelector(".pq-pop-head button"),pop.querySelector('#pqGrid .bb-cell[tabindex="0"]')].filter(Boolean);
+      if(f.length){ const at=f.indexOf(document.activeElement); e.preventDefault(); f[(at+(e.shiftKey?f.length-1:1))%f.length].focus(); }
+      return;
+    }
+  }
   const c=e.target.closest?.("#answerArea .choice");
   if(c&&(e.key==="ArrowDown"||e.key==="ArrowRight"||e.key==="ArrowUp"||e.key==="ArrowLeft")&&!e.altKey){
     const all=[...document.querySelectorAll("#answerArea .choice:not([disabled])")]; const i=all.indexOf(c);
     const n=all[(i+(e.key==="ArrowDown"||e.key==="ArrowRight"?1:all.length-1))%all.length]; if(n){ e.preventDefault(); n.focus(); }
   }
-});
+},true);
 
 function markChoice(l){
   document.querySelectorAll("#answerArea .choice").forEach(c=>{ const on=c.dataset.l===l; c.classList.toggle("sel",on); c.setAttribute("aria-checked",String(on)); });
@@ -500,7 +703,7 @@ async function checkAnswer(){
   }
   storeResult(it,res);
   paintPracticeResult(q,res);
-  const pop=document.getElementById("pqPop"); if(pop){ pop.remove(); document.querySelector(".pq")?.insertAdjacentHTML("beforeend",pqPopHTML()); }
+  PQ_refreshNav();
   const bar=document.querySelector(".q-progress i"); if(bar){ const done=P.items.filter(i=>i.submitted||i.result||(P.results&&P.results[i.id])).length; bar.style.width=Math.round(done/P.items.length*100)+"%"; }
   savePracticeProgress();
 }
@@ -550,7 +753,7 @@ function finishPractice(fromStatus){
     <p style="color:var(--ink2);margin-bottom:1.8rem">${c} of ${total} correct · ${graded.length} answered</p>
     <div style="display:flex;gap:.7rem;justify-content:center;flex-wrap:wrap">
       <button class="btn btn-primary" onclick="go('${P.returnView}')">${svg("back","ic-sm")} Return to ${practiceReturnLabel(P.returnView)}</button>
-      ${P.server&&P.kind==="bank"?`<button class="btn btn-ghost" onclick="go('bank',{bankStage:'results',bf:${plJs(P.filters||{})}})">${svg("target","ic-sm")} Back to these results</button>`:""}
+      ${P.server&&P.kind==="bank"?`<button class="btn btn-ghost" onclick="QB_startWith(${plJs({...(P.filters||{}),shuffle:!!P.filters?.shuffle})},{remember:false})">${svg("rush","ic-sm")} Practise these again</button>`:""}
       <button class="btn btn-ghost" onclick="go('profile')">${svg("profile","ic-sm")} View progress</button>
     </div></div></div>`;
 }
@@ -568,7 +771,7 @@ async function gradeAnswer(q,selected,mode){
 // Kept for links that still call the old entry point.
 async function startPractice(section,category,subcategory=null){
   const bf=blankBankFilters(); bf.subjects=[section]; if(category) bf.domains=[category]; if(subcategory) bf.skills=[subcategory];
-  go("bank",{bankStage:"results",bf});
+  QB_startWith(bf,{remember:false});
 }
 
 // ──────────────── Question Rush ────────────────
