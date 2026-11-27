@@ -11,6 +11,8 @@ const LIB_FMT=new Intl.NumberFormat(undefined,{maximumFractionDigits:2});
 function libSafeUrl(u){
   const s=String(u||"").trim();
   if(s.startsWith(LIB_MEDIA)) return /^[A-Za-z0-9._-]{1,120}$/.test(s.slice(LIB_MEDIA.length))?s:"";
+  // Local files shown in the import preview before anything is uploaded.
+  if(s.startsWith("blob:"+location.origin+"/")) return s;
   try{ const x=new URL(s); return x.protocol==="https:"&&!x.username&&!x.password?x.href:""; }catch{ return ""; }
 }
 function libParas(t){ return String(t??"").split(/\n{2,}/).map(p=>`<p>${esc(p).replace(/\n/g,"<br>")}</p>`).join(""); }
@@ -101,8 +103,9 @@ async function viewLibrary(){
   if(document.getElementById("libList")&&document.getElementById("libWrap")){ document.getElementById("libWrap").innerHTML=list; return; }
   $c().innerHTML=`<div class="page-head fade"><h1>Reading Library</h1><p>Short original articles and excerpts to build reading stamina. Each piece shows its topic and an estimated reading time.</p>
       ${d.canEdit?`<div class="lib-admin-bar"><button class="btn btn-primary" onclick="FX_libEdit(null)">${svg("edit","ic-sm")} New piece</button>
-        <button class="btn btn-ghost" onclick="FX_libImport()">${svg("upload","ic-sm")} Import JSON</button>
+        <button class="btn btn-ghost" id="libImportBtn" onclick="FX_libImport()">${svg("upload","ic-sm")} Import material</button>
         <a class="btn btn-ghost" href="/docs/library-import/library-sample.json" download="library-sample.json">Download sample JSON</a>
+        <a class="btn btn-ghost" href="/docs/library-import/library-sample.zip" download="library-sample.zip" title="The sample JSON plus its image files, ready to import in one step">Download sample package (ZIP)</a>
         <button class="btn btn-ghost" onclick="FX_libPrompt()">Generate compatible JSON</button></div>`:""}</div>
     <div class="panel fade lib-tools"><input type="search" placeholder="Search titles, topics and text" aria-label="Search the library" value="${esc(LIB.q)}" oninput="clearTimeout(window.__libT);const v=this.value;window.__libT=setTimeout(()=>{LIB.q=v.trim();viewLibrary();},300)"/>
       <select aria-label="Topic" onchange="LIB.topic=this.value;viewLibrary()"><option value="">All topics</option>${d.topics.map(t=>`<option ${LIB.topic===t?"selected":""}>${esc(t)}</option>`).join("")}</select></div>
@@ -249,6 +252,12 @@ function leRemove(i){
   document.getElementById("leLive").textContent=`Block ${i+1} removed.`;
 }
 function leInsert(i,type){ LE.blocks.splice(i,0,leNewBlock(type)); leRender(`#le${i}_h`); }
+// "Insert image": add an image block at the end and open the file picker at
+// once; the upload goes to the persistent media store (leUpload).
+function leInsertImage(){
+  const i=LE.blocks.length; LE.blocks.push(leNewBlock("image")); leRender(`#le${i}_file`);
+  const f=document.getElementById(`le${i}_file`); if(f){ f.scrollIntoView?.({block:"nearest"}); try{ f.click(); }catch{} }
+}
 async function leUpload(i,input){
   const f=input.files?.[0]; if(!f) return;
   if(f.size>3_000_000){ toast("Images must be 3 MB or smaller."); input.value=""; return; }
@@ -280,7 +289,7 @@ async function FX_libEdit(id){
     <ol class="le-blocks" id="leBlocks"></ol>
     <div class="le-add" id="leAddRow"><span class="umeta">Add at end:</span>
       <button type="button" class="btn btn-ghost btn-xs" onclick="leInsert(LE.blocks.length,'paragraph')">${svg("plus","ic-sm")} Paragraph</button>
-      <button type="button" class="btn btn-ghost btn-xs" onclick="leInsert(LE.blocks.length,'image')">${svg("image","ic-sm")} Image</button>
+      <button type="button" class="btn btn-ghost btn-xs" id="leInsertImage" onclick="leInsertImage()">${svg("image","ic-sm")} Insert image</button>
       <button type="button" class="btn btn-ghost btn-xs" onclick="leInsert(LE.blocks.length,'chart')">${svg("graph","ic-sm")} Chart</button></div>
     <p class="sr-only" id="leLive" aria-live="polite"></p>
     <details ${a.question?"open":""}><summary><b>Comprehension question (optional)</b></summary>
@@ -317,14 +326,91 @@ async function FX_libSave(id){
 // ──────────────── JSON import (admin) ────────────────
 let LI=null;
 function FX_libImport(){
-  LI={data:null,files:[],preview:null};
-  ftModal("Import Reading Library JSON",`<p class="umeta">One article or a batch in the <b>fnf-library</b> format. Articles are matched by their <code>id</code>: a new id creates a draft, a known id updates that piece. Published pieces are never overwritten unless you tick them below. Nothing is saved until you click Import. <a href="/docs/library-import/README.md" target="_blank" rel="noopener">Format guide</a></p>
-    <div class="f-row"><div class="field"><label for="liJson">Article JSON file</label><input type="file" id="liJson" accept=".json,application/json" onchange="liChanged()"/></div>
-    <div class="field"><label for="liMedia">Media files (images and chart images, matched by file name)</label><input type="file" id="liMedia" multiple accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" onchange="liChanged()"/></div></div>
+  LI={data:null,files:[],preview:null,urls:[]};
+  ftModal("Import material",`<p class="umeta">Upload a prepared article (or a batch) in the <b>fnf-library</b> format, in one step:
+      a <b>ZIP</b> containing the JSON and its image files (self-contained), or a plain <b>JSON</b> file whose images are already stored or are https links.
+      Articles are matched by their <code>id</code>: a new id is created as a <b>draft</b>, a known id updates that piece, and an unchanged re-import is skipped, so nothing is duplicated.
+      Published pieces are never overwritten unless you tick them. Nothing is saved until you click Import.
+      <a href="/docs/library-import/README.md" target="_blank" rel="noopener">Format guide</a> · <a href="/docs/library-import/library-sample.zip" download="library-sample.zip">Sample package (ZIP)</a></p>
+    <div class="f-row"><div class="field"><label for="liJson">Material file (.zip or .json)</label><input type="file" id="liJson" accept=".zip,.json,application/zip,application/json" onchange="liChanged()"/></div>
+    <div class="field"><label for="liMedia">Extra image files (optional — matched by file name)</label><input type="file" id="liMedia" multiple accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" onchange="liChanged()"/></div></div>
     <div id="liResult" aria-live="polite"></div>`,
     {wide:true,foot:`<button class="btn btn-ghost" id="liPrevBtn" onclick="liPreview()">Preview</button><button class="btn btn-primary" id="liGo" onclick="liCommit()" disabled>${svg("upload","ic-sm")} Import</button>`});
 }
-function liChanged(){ if(LI){ LI.preview=null; } const g=document.getElementById("liGo"); if(g) g.disabled=true; const r=document.getElementById("liResult"); if(r) r.innerHTML=""; }
+// ── Minimal ZIP reader (stored + deflate, via the browser's DecompressionStream) ──
+const LI_MIME={png:"image/png",jpg:"image/jpeg",jpeg:"image/jpeg",gif:"image/gif",webp:"image/webp",svg:"image/svg+xml"};
+async function liUnzip(file){
+  const buf=new Uint8Array(await file.arrayBuffer()), dv=new DataView(buf.buffer,buf.byteOffset,buf.byteLength);
+  let eocd=-1;
+  for(let i=buf.length-22;i>=Math.max(0,buf.length-65557);i--){ if(dv.getUint32(i,true)===0x06054b50){ eocd=i; break; } }
+  if(eocd<0) throw new Error("This file is not a valid ZIP archive.");
+  const count=dv.getUint16(eocd+10,true); let p=dv.getUint32(eocd+16,true);
+  if(count>400) throw new Error("The ZIP holds too many files (400 at most).");
+  const out=[]; let total=0;
+  for(let k=0;k<count;k++){
+    if(p+46>buf.length||dv.getUint32(p,true)!==0x02014b50) throw new Error("The ZIP directory is damaged.");
+    const flags=dv.getUint16(p+8,true), method=dv.getUint16(p+10,true), csize=dv.getUint32(p+20,true), usize=dv.getUint32(p+24,true);
+    const nlen=dv.getUint16(p+28,true), elen=dv.getUint16(p+30,true), clen=dv.getUint16(p+32,true), lho=dv.getUint32(p+42,true);
+    const name=new TextDecoder().decode(buf.subarray(p+46,p+46+nlen));
+    p+=46+nlen+elen+clen;
+    if(name.endsWith("/")||/(^|\/)(__MACOSX|\.)/.test(name)) continue;
+    if(flags&1) throw new Error(`${name} is encrypted; save the ZIP without a password.`);
+    total+=usize; if(total>80_000_000) throw new Error("The ZIP is too large once unpacked (80 MB at most).");
+    const start=lho+30+dv.getUint16(lho+26,true)+dv.getUint16(lho+28,true), raw=buf.subarray(start,start+csize);
+    let data;
+    if(method===0) data=raw;
+    else if(method===8){
+      if(typeof DecompressionStream!=="function") throw new Error("This browser can't unpack ZIP files; upload the JSON and images separately.");
+      data=new Uint8Array(await new Response(new Response(raw).body.pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer());
+    } else throw new Error(`${name} uses an unsupported compression method; re-save the ZIP with standard compression.`);
+    out.push({name,data});
+  }
+  return out;
+}
+const liBase=n=>String(n||"").split(/[\\/]/).pop();
+const liKey=n=>liBase(n).trim().toLowerCase();
+// Read the chosen file(s) into { data, files: File[], ignored: [] }.
+async function liReadInputs(){
+  const main=document.getElementById("liJson").files?.[0];
+  if(!main) throw new Error("Choose the material file (.zip or .json) first.");
+  let jsonText=null; const files=[], ignored=[];
+  if(/\.zip$/i.test(main.name)||main.type==="application/zip"||main.type==="application/x-zip-compressed"){
+    const entries=await liUnzip(main);
+    const jsons=entries.filter(e=>/\.json$/i.test(e.name)).sort((a,b)=>a.name.split("/").length-b.name.split("/").length);
+    if(!jsons.length) throw new Error("The ZIP has no .json file. Put the article JSON next to its images.");
+    if(jsons.length>1) ignored.push(...jsons.slice(1).map(j=>`${j.name} (only ${jsons[0].name} is imported)`));
+    jsonText=new TextDecoder().decode(jsons[0].data);
+    for(const e of entries){
+      if(/\.json$/i.test(e.name)) continue;
+      const ext=(e.name.split(".").pop()||"").toLowerCase();
+      if(!LI_MIME[ext]){ ignored.push(`${e.name} (not an image)`); continue; }
+      files.push(new File([e.data],liBase(e.name),{type:LI_MIME[ext]}));
+    }
+  } else jsonText=await main.text();
+  for(const f of document.getElementById("liMedia").files||[]) files.push(f);
+  let data; try{ data=JSON.parse(jsonText.replace(/^\uFEFF/,"")); }catch(e){ throw new Error(`The article JSON is not valid: ${e.message}`); }
+  // Later files with the same name replace earlier ones (extra images win over the ZIP).
+  const byName=new Map(); for(const f of files) byName.set(liKey(f.name),f);
+  return {data,files:[...byName.values()],ignored};
+}
+// Render each article exactly as students will see it, with local images.
+function liArticlesOf(data){ return Array.isArray(data?.articles)?data.articles:data&&typeof data==="object"?[data]:[]; }
+function liPreviewArticleHTML(a,urlFor){
+  const missing=[];
+  const blocks=(Array.isArray(a?.blocks)?a.blocks:[]).map(b=>{
+    if(!b||typeof b!=="object") return null;
+    if(b.type==="paragraph") return {type:"paragraph",text:String(b.text??"")};
+    const ref=String(b.media??b.url??b.src??"").trim();
+    if(b.type==="chart"&&b.chart&&!ref) return {type:"chart",chart:b.chart,alt:b.alt,caption:b.caption,source:b.source};
+    const url=libSafeUrl(ref)||urlFor(ref);
+    if(!url){ missing.push(ref||"(no file named)"); return {type:"paragraph",text:`[Missing image: ${ref||"no file named"}]`}; }
+    return {type:b.type==="chart"?"chart":"image",url,alt:b.alt,caption:b.caption,source:b.source};
+  }).filter(Boolean);
+  const q=a?.question;
+  return {missing,html:`<article class="reader lib-prev-article"><p class="lib-topic">${esc(a?.topic||"Reading")}</p><h1>${esc(a?.title||"Untitled")}</h1>
+    <div class="reader-body">${libRenderContent({blocks,body:blocks.length?"":String(a?.body||"")})}</div>
+    ${q?.prompt?`<div class="panel lib-q"><b>Comprehension question</b><p>${esc(q.prompt)}</p><ol type="A">${["A","B","C","D"].filter(k=>q.choices?.[k]).map(k=>`<li>${esc(q.choices[k])}${q.answer===k?" <span class=\"pill pill-sec\">answer</span>":""}</li>`).join("")}</ol></div>`:""}</article>`};
+}function liChanged(){ if(LI){ LI.preview=null; (LI.urls||[]).forEach(u=>URL.revokeObjectURL(u)); LI.urls=[]; } const g=document.getElementById("liGo"); if(g) g.disabled=true; const r=document.getElementById("liResult"); if(r) r.innerHTML=""; }
 async function liSha(file){
   const buf=await file.arrayBuffer(); const h=await crypto.subtle.digest("SHA-256",buf);
   return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,"0")).join("");
@@ -337,24 +423,37 @@ function liIssueList(a){
   return li.length?`<ul class="li-issues">${li.join("")}</ul>`:"";
 }
 async function liPreview(){
-  const jf=document.getElementById("liJson").files?.[0], out=document.getElementById("liResult");
-  if(!jf){ out.innerHTML=`<p class="li-err">Choose the JSON file first.</p>`; return; }
-  let data; try{ data=JSON.parse(await jf.text()); }catch(e){ out.innerHTML=`<p class="li-err">This file is not valid JSON: ${esc(e.message)}</p>`; return; }
-  const media=[...(document.getElementById("liMedia").files||[])];
+  const out=document.getElementById("liResult"), btn=document.getElementById("liPrevBtn");
+  let read;
+  btn.disabled=true; out.innerHTML=`<div class="spin"></div>`;
+  try{ read=await liReadInputs(); }catch(e){ out.innerHTML=`<p class="li-err">${esc(e.message)}</p>`; btn.disabled=false; return; }
+  const {data,files:media,ignored}=read;
   const big=media.filter(f=>f.size>3_000_000);
-  if(big.length){ out.innerHTML=`<p class="li-err">These media files are over 3 MB: ${big.map(f=>esc(f.name)).join(", ")}</p>`; return; }
-  const btn=document.getElementById("liPrevBtn"); btn.disabled=true; out.innerHTML=`<div class="spin"></div>`;
+  if(big.length){ out.innerHTML=`<p class="li-err">These image files are over 3 MB: ${big.map(f=>esc(f.name)).join(", ")}</p>`; btn.disabled=false; return; }
   try{
     const files=[]; for(const f of media) files.push({name:f.name,size:f.size,type:f.type,sha256:await liSha(f)});
     const r=await api("library/import/preview",{method:"POST",body:JSON.stringify({data,files})});
-    LI={data,files:media,preview:r};
+    (LI?.urls||[]).forEach(u=>URL.revokeObjectURL(u));
+    LI={data,files:media,preview:r,urls:[]};
+    const local=new Map(media.map(f=>{ const u=URL.createObjectURL(f); LI.urls.push(u); return [liKey(f.name),u]; }));
+    const urlFor=ref=>local.get(liKey(ref))||null;
+    const arts=liArticlesOf(data);
     const c=r.counts;
     out.innerHTML=`${r.fileErrors.length?`<ul class="li-issues">${r.fileErrors.map(e=>`<li class="li-err"><b>File error</b> ${e.path?`<code>${esc(e.path)}</code>: `:""}${esc(e.message)}</li>`).join("")}</ul>`:""}
-      <p class="li-sum"><b>${r.articles.length}</b> article${r.articles.length===1?"":"s"}: ${c.create} new · ${c.update} update${c.update===1?"":"s"} · ${c.unchanged} unchanged · ${c.blocked} published (not overwritten) · ${c.invalid} with problems${media.length?` · ${media.length} media file${media.length===1?"":"s"} selected`:""}</p>
-      <ul class="li-list">${r.articles.map(a=>`<li class="panel li-art"><div class="li-art-head"><span class="pill ${LI_ACTION[a.action][1]}">${LI_ACTION[a.action][0]}</span>
+      <p class="li-sum"><b>${r.articles.length}</b> article${r.articles.length===1?"":"s"}: ${c.create} new · ${c.update} update${c.update===1?"":"s"} · ${c.unchanged} unchanged · ${c.blocked} published (not overwritten) · ${c.invalid} with problems${media.length?` · ${media.length} image file${media.length===1?"":"s"}: ${media.map(f=>esc(f.name)).join(", ")}`:""}</p>
+      ${ignored.length?`<p class="umeta">Not imported from the ZIP: ${ignored.map(esc).join("; ")}</p>`:""}
+      <ul class="li-list">${r.articles.map((a,i)=>{
+        const src=arts.find(x=>x&&String(x.id??"")===String(a.id??""))||arts[i];
+        const pv=src?liPreviewArticleHTML(src,urlFor):{missing:[],html:""};
+        const miss=[...new Set([...(a.unresolvedMedia||[]).map(u=>u.ref),...pv.missing])];
+        return `<li class="panel li-art"><div class="li-art-head"><span class="pill ${LI_ACTION[a.action][1]}">${LI_ACTION[a.action][0]}</span>
         <b>${esc(a.title||"(no title)")}</b> <span class="umeta"><code>${esc(a.id||a.path)}</code> · ${a.blocks?`${a.blocks} blocks`:"text only"} · ${a.words} words${a.hasQuestion?" · question":""} · will be ${esc(a.status)}${a.existingId?` · piece #${a.existingId}`:""}</span></div>
+        ${miss.length?`<p class="li-err"><b>Missing image file${miss.length===1?"":"s"}:</b> ${miss.map(m=>`<code>${esc(m)}</code>`).join(", ")} — add ${miss.length===1?"it":"them"} to the ZIP or under Extra image files.</p>`:""}
         ${a.action==="blocked"?`<label class="umeta li-ow"><input type="checkbox" class="li-ow-box" value="${esc(a.id)}" onchange="liCount()"/> Overwrite this published piece (it stays published with the new content)</label>`:""}
-        ${liIssueList(a)}</li>`).join("")}</ul>`;
+        ${liIssueList(a)}
+        ${pv.html?`<details class="li-pv" ${i===0?"open":""}><summary>Preview the article as students will see it</summary><div class="le-preview">${pv.html}</div></details>`:""}</li>`;
+      }).join("")}</ul>`;
+    if(typeof typesetMath==="function") typesetMath(out);
     liCount();
   }catch(e){ out.innerHTML=`<p class="li-err">${esc(e.message)}</p>`; }
   btn.disabled=false;
@@ -415,7 +514,7 @@ Writing rules: original text only (do not copy published works); 300-700 words p
 
 Now write [NUMBER] articles about [TOPIC].`;
 function FX_libPrompt(){
-  ftModal("Generate compatible JSON",`<p class="umeta">Copy this prompt into ChatGPT (or another assistant), replace <b>[NUMBER]</b> and <b>[TOPIC]</b>, save the answer as a <code>.json</code> file and import it with <b>Import JSON</b>. Upload any images it names in the same dialog.</p>
+  ftModal("Generate compatible JSON",`<p class="umeta">Copy this prompt into ChatGPT (or another assistant), replace <b>[NUMBER]</b> and <b>[TOPIC]</b>, save the answer as a <code>.json</code> file and import it with <b>Import material</b> — as a ZIP together with the images it names, or as JSON plus the image files.</p>
     <div class="field"><label for="libPromptTxt">Prompt</label><textarea id="libPromptTxt" rows="16" readonly>${esc(LIB_PROMPT)}</textarea></div>`,
     {wide:true,foot:`<a class="btn btn-ghost" href="/docs/library-import/library-sample.json" download="library-sample.json">Download sample JSON</a><button class="btn btn-primary" onclick="FX_libCopyPrompt()">Copy prompt</button>`});
 }

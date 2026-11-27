@@ -21,7 +21,7 @@ function EXP_buttonHTML(spec,opts={}){
   const key=spec.key||JSON.stringify(spec,(k,v)=>typeof v==="function"?undefined:v);
   let i=EXP.keys.get(key);
   if(i===undefined){ i=EXP.specs.push(spec)-1; EXP.keys.set(key,i); } else EXP.specs[i]=spec;
-  return `<button type="button" class="btn btn-ghost ${opts.size||"btn-sm"} exp-btn" onclick="EXP_open(${i})" title="Download as PDF or JSON">${EXP_icon()} Download</button>`;
+  return `<button type="button" class="btn btn-ghost ${opts.size||"btn-sm"} exp-btn" onclick="EXP_open(${i})" title="Download as PDF or JSON" aria-label="Download as PDF or JSON">${EXP_icon()} Download <span class="exp-fmt">PDF · JSON</span></button>`;
 }
 
 // The staff question browsers' filter ({q,section,category,subcategory,difficulty,type})

@@ -70,3 +70,8 @@
 .li-issues code,.li-art code{font-size:.8rem}
 .li-err{color:var(--red)}
 .li-warn{color:var(--gold)}
+/* Import material: rendered article preview before saving */
+.li-pv{margin-top:.7rem}
+.li-pv>summary{cursor:pointer;font-weight:600}
+.li-pv .le-preview{max-height:60vh;overflow:auto;margin-top:.5rem}
+.li-pv .lib-q ol{margin:.4rem 0 0 1.2rem}
