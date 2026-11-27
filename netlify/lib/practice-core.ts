@@ -35,10 +35,19 @@ export function normalizeFilters(raw: unknown): PracticeFilters {
   };
 }
 
-// Read filters from URL search params (?subjects=math,ebrw&difficulties=hard…).
+// Read filters from URL search params. The browser sends one JSON value
+// (?f={"skills":["Form, structure, and sense"]}) so names that contain commas
+// survive intact; repeated params (?skills=a&skills=b) also work. Only the
+// fixed-vocabulary keys (subjects, difficulties, status) accept the legacy
+// comma-joined form — domain and skill names may themselves contain commas.
 export function filtersFromParams(p: URLSearchParams): PracticeFilters {
-  const get = (k: string) => p.getAll(k).flatMap((v) => v.split(","));
-  return normalizeFilters({ subjects: get("subjects"), difficulties: get("difficulties"), domains: get("domains"), skills: get("skills"), status: get("status") });
+  const raw = p.get("f");
+  if (raw) {
+    try { return normalizeFilters(JSON.parse(raw)); } catch { /* fall through to plain params */ }
+  }
+  const split = (k: string) => p.getAll(k).flatMap((v) => v.split(","));
+  const whole = (k: string) => p.getAll(k);
+  return normalizeFilters({ subjects: split("subjects"), difficulties: split("difficulties"), domains: whole("domains"), skills: whole("skills"), status: split("status") });
 }
 
 // The subjects a filter may actually reach.

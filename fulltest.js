@@ -76,7 +76,7 @@ function ftTestListHTML(){
       <button class="btn ${t.status==="published"?"btn-ghost":"btn-primary"} btn-sm" onclick="go('testpreview',{testId:${t.id}})">${ftIcon("eye")} ${t.status==="published"?"Preview":"Preview & publish"}</button>
       <button class="btn btn-ghost btn-sm" onclick="go('testedit',{testId:${t.id}})">${svg("edit","ic-sm")} Edit modules & questions</button>
       <button class="btn btn-ghost btn-sm" onclick="go('testreview',{testId:${t.id}})">${svg("book","ic-sm")} Review & assign questions</button>
-      ${canDeleteTest(t)?`<button class="btn btn-ghost btn-sm" onclick="exportFtTest(${t.id})">${ftIcon("download")} Export JSON</button>`:""}
+      ${canDeleteTest(t)?EXP_buttonHTML({scope:"test",testId:t.id}):""}
       ${canDeleteTest(t)?`<button class="btn btn-danger btn-sm" onclick="deleteTest(${t.id})">${svg("x","ic-sm")} Delete</button>`:""}
     </div></div>`).join("");
   return `${cards||`<div class="empty"><div class="ei">${svg("layers")}</div><p>No full-length tests yet — import a file above.</p></div>`}
@@ -762,8 +762,9 @@ function FTS_open(testId){
   document.querySelectorAll('[id^="ftSetup"]').forEach(el=>{ const id=Number(el.id.slice(7)); el.innerHTML=FTS.open===id?ftSetupHTML(FTS.tests.get(id)):""; });
   document.querySelectorAll('[aria-controls^="ftSetup"]').forEach(b=>b.setAttribute("aria-expanded",String(b.getAttribute("aria-controls")===`ftSetup${FTS.open}`)));
   if(FTS.open) document.getElementById(`ftSetup${FTS.open}`)?.scrollIntoView({behavior:"smooth",block:"nearest"});
+  if(typeof CR_paint==="function") CR_paint();
 }
-function FTS_rerender(){ const t=FTS.tests.get(FTS.open); const el=document.getElementById(`ftSetup${FTS.open}`); if(t&&el) el.innerHTML=ftSetupHTML(t); }
+function FTS_rerender(){ const t=FTS.tests.get(FTS.open); const el=document.getElementById(`ftSetup${FTS.open}`); if(t&&el){ el.innerHTML=ftSetupHTML(t); if(typeof CR_paint==="function") CR_paint(); } }
 function FTS_set(k,v){ FTS[k]=v; FTS_rerender(); }
 function FTS_toggle(id){ if(FTS.sel.has(id)) FTS.sel.delete(id); else FTS.sel.add(id); FTS_rerender(); }
 function ftSetupHTML(t){
@@ -791,7 +792,7 @@ function ftSetupHTML(t){
       <div class="ft-seg" role="radiogroup" aria-label="What to practice">${seg("scope","full","Full test",t.isAdaptive?"Adaptive routing, as on test day":"Every module in order")}${seg("scope","modules","Select modules","Practice only the modules you pick")}</div></div>
     <div class="ft-setup-row"><div class="ft-setup-lbl">Timing</div>
       <div class="ft-seg" role="radiogroup" aria-label="Timing">${seg("timed",true,"Timed","Each module's configured time limit")}${seg("timed",false,"Untimed","No countdown, no automatic submit")}</div></div>
-    ${list}${summary}
+    ${list}${summary}${typeof CR_costHTML==="function"?CR_costHTML(chosen[0]?.questionCount||0):""}
     <div style="display:flex;gap:.6rem;margin-top:1rem;flex-wrap:wrap">
       <button class="btn btn-primary" ${ready?"":"disabled aria-disabled=\"true\""} onclick="FTS_start(${t.id})">${svg("rush","ic-sm")} Start</button>
       <button class="btn btn-ghost" onclick="FTS_open(${t.id})">Cancel</button></div>
@@ -813,7 +814,7 @@ async function FTS_start(testId,examChoice){
     FTS.open=null;
     if(row.resumed) toast("You already have this test in progress — resuming it as it was set up.");
     go("testsit",{attemptId:row.id});
-  }catch(e){ toast(e.message); viewTestsStudent(); }
+  }catch(e){ if(e.data?.outOfCredits&&typeof CR_outOfCredits==="function"){ CR_outOfCredits(e.data); viewTestsStudent(); return; } toast(e.message); viewTestsStudent(); }
 }
 
 function ftStudentTaskCard(t){

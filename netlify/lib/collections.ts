@@ -28,6 +28,10 @@ import {
   normalizeQuestion, difficultyNum, sanitizeRichHtml, MAX_STORED_FIELD, BANK,
   type NormQuestion, type ImportIssue, type FullTestDeps,
 } from "./fulltests.js";
+import {
+  TAXONOMY_DOMAINS, TAXONOMY_SKILLS, resolveDomain, resolveSkill, strictDifficulty, checkQuestionTags, groupBySubject,
+  type Difficulty, type TagFlag, type TagNotice, type SubjectGroup,
+} from "./taxonomy.js";
 import DOMAIN_TEMPLATE from "../../docs/collection-import/question-bank-domain-template.json" with { type: "json" };
 import CHALLENGE_TEMPLATE from "../../docs/collection-import/challenge-set-template.json" with { type: "json" };
 
@@ -35,40 +39,15 @@ type DbUser = typeof users.$inferSelect;
 export const CHALLENGE = "CHALLENGE";
 export const COLLECTION_FORMAT_VERSION = "1.0";
 
-// The platform's section ids and Question Bank domains (same names the bank,
-// lessons and student pages use).
-export const DOMAINS = {
-  math: ["Algebra", "Advanced Math", "Problem Solving and Data Analysis", "Geometry and Trigonometry"],
-  ebrw: ["Information and Ideas", "Craft and Structure", "Expression of Ideas", "Standard English Conventions"],
-} as const;
+// The platform's section ids, Question Bank domains and SAT skills per domain
+// (same names the bank, lessons and student pages use) — defined once in
+// ./taxonomy.ts together with the confirmed legacy aliases.
+export const DOMAINS = TAXONOMY_DOMAINS;
 type Section = keyof typeof DOMAINS;
-// SAT skills per domain — the same taxonomy the bank editor, lessons and
-// student pages use. An imported question's skill must be one of these.
-export const SKILLS: Record<string, string[]> = {
-  "Craft and Structure": ["Cross-text connection", "Text structure and purpose", "Words in context"],
-  "Expression of Ideas": ["Rhetorical synthesis", "Transitions"],
-  "Information and Ideas": ["Central ideas and details", "Command of evidence", "Inferences"],
-  "Standard English Conventions": ["Boundaries", "Form, structure, and sense"],
-  "Algebra": ["Linear equations in one variable", "Linear functions", "Linear equations in two variables", "Systems of two linear equations in two variables", "Linear inequalities in one or two variables"],
-  "Advanced Math": ["Equivalent expressions", "Nonlinear equations in one variable and systems of equations in two variables", "Nonlinear functions"],
-  "Problem Solving and Data Analysis": ["Ratios, rates, proportional relationships, and units", "Percentages", "One-variable data: Distributions and measures of center and spread", "Two-variable data: Models and scatterplots", "Probability and conditional probability", "Inference from sample statistics and margin of error", "Evaluating statistical claims: Observational studies and experiments"],
-  "Geometry and Trigonometry": ["Area and volume", "Lines, angles, and triangles", "Right triangles and trigonometry", "Circles"],
-};
-const skillKey = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-function canonicalSkill(domain: string, v: unknown) {
-  const t = skillKey(str(v, 200));
-  return t ? (SKILLS[domain] || []).find((k) => skillKey(k) === t) ?? null : null;
-}
-type Diff = "Easy" | "Medium" | "Hard";
-// Strict difficulty: Easy / Medium / Hard (any case) or the legacy 1–5 scale.
-function strictDifficulty(v: unknown): Diff | null | "invalid" {
-  const t = str(v, 20).toLowerCase();
-  if (!t) return null;
-  if (t === "easy" || t === "1" || t === "2") return "Easy";
-  if (t === "medium" || t === "3") return "Medium";
-  if (t === "hard" || t === "4" || t === "5") return "Hard";
-  return "invalid";
-}
+export const SKILLS: Record<string, string[]> = TAXONOMY_SKILLS;
+// Exact names (case / punctuation-insensitive) or a confirmed legacy alias.
+const canonicalSkill = (domain: string, v: unknown) => resolveSkill(domain, str(v, 200)).value;
+type Diff = Difficulty;
 // Question fields the importer reads; anything else is reported (and ignored).
 const KNOWN_FIELDS = new Set(["id", "questionId", "section", "domain", "category", "skill", "subcategory", "subskill", "difficulty", "level",
   "questionType", "type", "format", "passageText", "passage", "stimulus", "text", "passages", "text1", "text2", "passageText1", "passageText2", "passage1", "passage2",
@@ -83,13 +62,11 @@ const SET_ID_RE = /^[a-z0-9][a-z0-9._-]{1,79}$/;
 
 const str = (v: unknown, max = 400) => (v === null || v === undefined ? "" : String(v)).trim().slice(0, max);
 const isSection = (v: string): v is Section => v === "math" || v === "ebrw";
-// Exact domain names, case-insensitively; the full-test spelling
-// "Problem-Solving and Data Analysis" is the same domain.
+// Exact domain names (case / punctuation-insensitive, so the full-test spelling
+// "Problem-Solving and Data Analysis" is the same domain) or a confirmed alias.
 function canonicalDomain(section: Section, v: unknown) {
-  const t = str(v, 120).toLowerCase().replace(/-/g, " ");
-  return DOMAINS[section].find((d) => d.toLowerCase() === t) ?? null;
+  return resolveDomain(section, str(v, 120)).value;
 }
-const sectionOfDomain = (v: unknown) => (Object.keys(DOMAINS) as Section[]).find((sec) => canonicalDomain(sec, v)) ?? null;
 
 export type DestType = "questionBankDomain" | "challengeSet";
 export interface Destination {
@@ -97,7 +74,7 @@ export interface Destination {
   // Batch defaults chosen on the page; question values override them, and
   // per-question corrections made in the preview override both.
   skill?: string | null; difficulty?: Diff | "mixed" | null;
-  overrides?: Record<string, { skill?: string; difficulty?: string }>;
+  overrides?: Record<string, { domain?: string; skill?: string; difficulty?: string }>;
   domain?: string;                       // questionBankDomain
   setId?: string | null; title?: string; description?: string; // challengeSet (setId null = new set)
 }
@@ -123,7 +100,8 @@ function readDefaults(raw: any, domain: string | null): Pick<Destination, "skill
   if (raw?.overrides && typeof raw.overrides === "object") {
     for (const [k, v] of Object.entries(raw.overrides).slice(0, MAX_QUESTIONS)) {
       if (!v || typeof v !== "object") continue;
-      const o: { skill?: string; difficulty?: string } = {};
+      const o: { domain?: string; skill?: string; difficulty?: string } = {};
+      if (str((v as any).domain, 120)) o.domain = str((v as any).domain, 120);
       if (str((v as any).skill, 200)) o.skill = str((v as any).skill, 200);
       if (str((v as any).difficulty, 20)) o.difficulty = str((v as any).difficulty, 20);
       if (Object.keys(o).length) overrides[str(k, 120)] = o;
@@ -195,6 +173,13 @@ export interface CollectionPreview {
     valid: number; invalid: number; missingExplanations: number; duplicates: number };
   difficulty: Record<string, number>;
   skills: { domain: string; skill: string; count: number }[];
+  // Counts nested subject → domain → skill (canonical names, taxonomy order),
+  // each with new / changed / unchanged / invalid.
+  groups: SubjectGroup[];
+  // Confirmed legacy spellings that were mapped, e.g. q-17 · skill: "Cross-Text Connections" → "Cross-text connection".
+  notices: TagNotice[];
+  // Tags that could not be mapped, by question id and field. A flagged question blocks the import.
+  flags: TagFlag[];
   items: { id: string; status: "new" | "changed" | "unchanged"; domain: string; skill: string; difficulty: string | null; type: "MCQ" | "SPR"; valid: boolean; problems: string[] }[];
   sourceHash: string;
   previewToken: string;
@@ -218,7 +203,7 @@ async function prepare(raw: unknown, selectedRaw: unknown, user: DbUser, opts: {
   const out: Prepared = {
     ok: false, errors: [], warnings: [], issues, mismatches: [], declared: null, selected: null, destinationLabel: "",
     set: null, counts: { questions: 0, new: 0, changed: 0, unchanged: 0, keptNotInFile: 0, mcq: 0, spr: 0, tables: 0, images: 0, valid: 0, invalid: 0, missingExplanations: 0, duplicates: 0 },
-    difficulty: { Easy: 0, Medium: 0, Hard: 0 }, skills: [],
+    difficulty: { Easy: 0, Medium: 0, Hard: 0 }, skills: [], groups: [], notices: [], flags: [],
     items: [], sourceHash: "", previewToken: "", rows: [], existingByExt: new Map(),
   };
   const finish = () => {
@@ -258,6 +243,7 @@ async function prepare(raw: unknown, selectedRaw: unknown, user: DbUser, opts: {
   const declared: Destination = { type: dType as DestType, section };
   if (declared.type === "questionBankDomain") {
     const dom = canonicalDomain(section, d.domain);
+    if (dom && str(d.domain, 120) !== dom) out.notices.push({ questionId: "destination", field: "domain", from: str(d.domain, 120), to: dom, via: "alias", message: `destination · domain: "${str(d.domain, 120)}" → "${dom}"` });
     if (!dom) addError("destination.domain", `"${str(d.domain, 120) || "(missing)"}" is not a ${SECTION_LABEL[section]} domain — use one of: ${DOMAINS[section].join(", ")}`);
     declared.domain = dom ?? str(d.domain, 120);
   } else {
@@ -318,21 +304,6 @@ async function prepare(raw: unknown, selectedRaw: unknown, user: DbUser, opts: {
     else if (!ID_RE.test(id)) addError(`${qLoc} / id`, "may only contain letters, digits, \".\", \"_\", \":\" and \"-\" (max 120 characters)");
     else if (seen.has(id)) addError(`${qLoc} / id`, `"${id}" is also used by Q${seen.get(id)! + 1} — question ids must be unique within the file`);
     else seen.set(id, i);
-    if (q && typeof q === "object" && q.section !== undefined && str(q.section, 10) !== section)
-      addError(`${qLoc} / section`, `"${str(q.section, 40)}" does not match the file's destination section "${section}"`);
-    // Domain: a domain batch holds its one domain; a challenging set may mix
-    // the domains of its section. Either way the question keeps its own.
-    let domain: string | null = null;
-    const rawDomain = q && typeof q === "object" ? (q.domain ?? q.category) : undefined;
-    if (declared.type === "questionBankDomain") {
-      domain = declared.domain!;
-      if (rawDomain !== undefined && rawDomain !== null && rawDomain !== "" && canonicalDomain(section, rawDomain) !== declared.domain)
-        addError(`${qLoc} / domain`, `"${str(rawDomain, 120)}" does not match the file's destination domain "${declared.domain}" — move the question to a ${str(rawDomain, 120)} file`);
-    } else {
-      domain = canonicalDomain(section, rawDomain);
-      if (!rawDomain) addError(`${qLoc} / domain`, `is missing — Challenging Questions keep each question's domain; use one of: ${DOMAINS[section].join(", ")}`);
-      else if (!domain) addError(`${qLoc} / domain`, `"${str(rawDomain, 120)}" is not a ${SECTION_LABEL[section]} domain${sectionOfDomain(rawDomain) ? ` (it belongs to ${SECTION_LABEL[sectionOfDomain(rawDomain)!]})` : ""} — use one of: ${DOMAINS[section].join(", ")}`);
-    }
     const nq = normalizeQuestion(q, i, section, loc, reg);
     // normalizeQuestion names questions "<loc> / Q<n>"; name them by id too.
     const prefix = `${loc} / Q${i + 1}`;
@@ -341,25 +312,33 @@ async function prepare(raw: unknown, selectedRaw: unknown, user: DbUser, opts: {
       if (l === prefix || l.startsWith(`${prefix} /`)) issues[k].location = qLoc + l.slice(prefix.length);
     }
     nq.id = id;
-    nq.domain = domain ?? nq.domain;
     if (q && typeof q === "object") for (const k of Object.keys(q)) if (!KNOWN_FIELDS.has(k)) unknown.add(k);
-    // Skill: preview correction > the question's own > the batch default.
+    // Section / domain / skill / difficulty: one shared check (./taxonomy.ts)
+    // maps confirmed legacy aliases and flags everything else by field.
+    // Precedence: preview correction > the question's own > the batch default.
+    // A domain batch holds its one domain; a challenging set may mix the
+    // domains of its section, so there the question keeps (or is corrected to) its own.
     const ov = (sel.overrides || {})[id] || {};
-    const rawSkill = ov.skill ?? str(q?.skill ?? q?.subcategory ?? q?.subskill, 200);
-    if (domain) {
-      if (rawSkill) {
-        const sk = canonicalSkill(domain, rawSkill);
-        if (sk) nq.skill = sk;
-        else addError(`${qLoc} / skill`, `"${str(rawSkill, 120)}" is not a ${domain} skill — use one of: ${(SKILLS[domain] || []).join("; ")}`);
-      } else if (sel.skill && canonicalSkill(domain, sel.skill)) nq.skill = sel.skill;
-      else addError(`${qLoc} / skill`, `is missing — set "skill" on the question or choose a default skill for the batch (${(SKILLS[domain] || []).join("; ")})`);
+    const obj = q && typeof q === "object" ? q : {};
+    const tags = checkQuestionTags({
+      questionId: id || `Q${i + 1}`,
+      destination: { type: declared.type, section, domain: declared.type === "questionBankDomain" ? declared.domain ?? null : null },
+      section: obj.section,
+      domain: (declared.type === "challengeSet" ? ov.domain : undefined) ?? pick(obj, "domain", "category"),
+      skill: ov.skill ?? pick(obj, "skill", "subcategory", "subskill"),
+      difficulty: ov.difficulty ?? pick(obj, "difficulty", "level"),
+      defaultSkill: sel.type === "questionBankDomain" ? sel.skill ?? null : null,
+      defaultDifficulty: sel.difficulty && sel.difficulty !== "mixed" ? sel.difficulty : null,
+    });
+    for (const f of tags.flags) {
+      if (out.flags.length < 500) out.flags.push(f);
+      addError(`${qLoc} / ${f.field}`, f.suggestion ? `${f.message} — ${f.suggestion}` : f.message);
     }
-    // Difficulty: preview correction > the question's own > the batch default.
-    const qd = strictDifficulty(ov.difficulty ?? pick(q, "difficulty", "level"));
-    if (qd === "invalid") { addError(`${qLoc} / difficulty`, `"${str(ov.difficulty ?? q?.difficulty ?? q?.level, 40)}" must be Easy, Medium or Hard`); nq.difficulty = null; }
-    else if (qd) nq.difficulty = qd;
-    else if (sel.difficulty && sel.difficulty !== "mixed") nq.difficulty = sel.difficulty;
-    else { nq.difficulty = null; addError(`${qLoc} / difficulty`, "is missing — set \"difficulty\" on the question or choose a batch difficulty"); }
+    for (const n of tags.notices) if (out.notices.length < 500) out.notices.push(n);
+    const rawSkill = str(ov.skill ?? pick(obj, "skill", "subcategory", "subskill"), 200);
+    nq.domain = tags.domain ?? (declared.type === "challengeSet" ? str(pick(obj, "domain", "category"), 120) : nq.domain);
+    nq.skill = tags.skill ?? rawSkill;
+    nq.difficulty = tags.difficulty;
     if (!nq.explanation) out.counts.missingExplanations += 1;
     // Same content twice in one file is almost always a copy-paste mistake.
     const ck = createHash("sha256").update(JSON.stringify([nq.passageText ?? "", nq.questionPrompt, nq.options.map((o) => o.text)])).digest("hex");
@@ -417,6 +396,7 @@ async function prepare(raw: unknown, selectedRaw: unknown, user: DbUser, opts: {
     out.counts.tables += q.visuals.tables; out.counts.images += q.visuals.images;
   });
   out.counts.questions = norm.length;
+  out.groups = groupBySubject(out.items.map((it) => ({ section, domain: it.domain, skill: it.skill, status: it.status, valid: it.valid })));
   // Content already in the destination under another id would be a duplicate.
   if (declared.type === "questionBankDomain" && declared.domain && norm.length) {
     const prompts = [...new Set(out.rows.map((r) => r.prompt))].slice(0, MAX_QUESTIONS);

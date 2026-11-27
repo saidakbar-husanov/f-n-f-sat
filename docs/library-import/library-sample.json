@@ -1,0 +1,73 @@
+{
+  "format": "fnf-library",
+  "version": "1.0",
+  "articles": [
+    {
+      "id": "sample-tide-pools-01",
+      "title": "Life Between the Tides",
+      "topic": "Science",
+      "excerpt": "Twice a day, the ocean leaves the rocky shore. The animals that live there have to survive both worlds.",
+      "status": "draft",
+      "blocks": [
+        { "type": "paragraph", "text": "Twice each day, the ocean pulls back from rocky coastlines and exposes a narrow band of stone that, only hours earlier, lay under a meter or more of water. Biologists call this band the intertidal zone, and the shallow basins of seawater left behind in its hollows are known as tide pools." },
+        { "type": "paragraph", "text": "Life in a tide pool is a study in extremes. When the tide is out, a pool can warm by several degrees in the afternoon sun, and its salt concentration rises as water evaporates. When the tide returns, waves crash over the same pool, cooling it abruptly and threatening to tear loose anything not firmly attached." },
+        { "type": "image", "media": "tidepool-heron.svg", "alt": "A heron stands at the edge of a rocky tide pool that contains sea stars and anemones.", "caption": "Wading birds hunt in tide pools at low tide, when prey has nowhere to hide.", "source": "Illustration: F&F SAT sample media" },
+        { "type": "paragraph", "text": "Researchers who track pool temperatures over a full day find that the shallowest pools change the most. Deeper pools hold more water, and because water absorbs heat slowly, their temperatures stay comparatively steady even under strong sunlight." },
+        {
+          "type": "chart",
+          "chart": {
+            "kind": "line",
+            "title": "Water temperature in two tide pools during one low tide",
+            "xLabel": "Time of day",
+            "yLabel": "Temperature (°C)",
+            "labels": ["10:00", "11:00", "12:00", "13:00", "14:00", "15:00"],
+            "series": [
+              { "name": "Shallow pool (8 cm)", "values": [14, 17.5, 21, 24, 25.5, 19] },
+              { "name": "Deep pool (40 cm)", "values": [14, 15, 16.5, 17.5, 18, 16] }
+            ]
+          },
+          "alt": "Line chart. Both pools start at 14 °C at 10:00. The shallow pool rises to 25.5 °C by 14:00; the deep pool rises only to 18 °C. Both cool after the tide returns at 15:00.",
+          "caption": "The shallow pool warmed more than three times as much as the deep pool.",
+          "source": "Illustrative data for practice"
+        },
+        { "type": "paragraph", "text": "Many tide-pool animals cope with these swings through behavior rather than physiology. Snails crowd into crevices where the rock stays damp, and some anemones fold their tentacles inward, trapping a small reserve of water until the sea comes back." },
+        { "type": "chart", "media": "tide-heights.svg", "alt": "Bar chart of high-tide heights over five days, rising from 1.6 meters on Monday to 2.1 meters on Friday.", "caption": "High-tide heights grow as the moon approaches its full phase.", "source": "Illustrative data for practice" },
+        { "type": "paragraph", "text": "The rhythm of the tides is set largely by the moon. As the moon moves toward its full and new phases, high tides climb higher and low tides fall lower, exposing creatures that normally remain submerged and widening, for a few days, the world that tide-pool scientists can study." }
+      ],
+      "question": {
+        "prompt": "Based on the passage and the line chart, which statement best explains why the deep pool's temperature changed less than the shallow pool's?",
+        "choices": {
+          "A": "The deep pool was shaded by the heron and other wading birds.",
+          "B": "The deep pool held more water, which absorbs heat slowly.",
+          "C": "The deep pool was refilled by waves throughout the afternoon.",
+          "D": "The deep pool contained anemones that trapped cooler water."
+        },
+        "answer": "B",
+        "explanation": "The passage states that deeper pools hold more water and that water absorbs heat slowly, so their temperatures stay comparatively steady; the chart shows the deep pool rising only 4 °C. The other choices are not supported by the text.",
+        "support": "Deeper pools hold more water, and because water absorbs heat slowly, their temperatures stay comparatively steady even under strong sunlight."
+      }
+    },
+    {
+      "id": "sample-city-libraries-01",
+      "title": "The Quiet Reinvention of the Public Library",
+      "topic": "Social Science",
+      "blocks": [
+        { "type": "paragraph", "text": "When people imagine a public library, they often picture silent rows of shelves. Yet many city libraries now lend tools, host coding clubs, and offer rooms where neighbors record podcasts or practice job interviews." },
+        { "type": "paragraph", "text": "Librarians describe the change not as abandoning books but as extending the library's original purpose: giving everyone, regardless of income, access to the resources they need to learn." },
+        {
+          "type": "chart",
+          "chart": {
+            "kind": "bar",
+            "title": "Visits to one city library by purpose (thousands per year)",
+            "xLabel": "Purpose of visit",
+            "yLabel": "Visits (thousands)",
+            "labels": ["Borrow books", "Study space", "Events", "Computers", "Maker space"],
+            "series": [ { "name": "Visits", "values": [120, 85, 40, 62, 18] } ]
+          },
+          "alt": "Bar chart. Borrowing books accounts for the most visits (120 thousand), followed by study space (85), computers (62), events (40) and the maker space (18).",
+          "source": "Illustrative data for practice"
+        }
+      ]
+    }
+  ]
+}

@@ -75,11 +75,16 @@ export const attempts = pgTable("attempts", {
   mode: text().notNull().default("bank"),
   selected: text().notNull().default(""),
   correct: boolean().notNull().default(false),
+  // Unique id of one submission, sent by the browser (or derived from the
+  // practice session + question). A retried request with the same key gets the
+  // stored attempt back instead of a second scored attempt or credit charge.
+  clientKey: text("client_key"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (t) => [
   // Leaderboards, usage and reports read one student's (or one period's) answers.
   index("attempts_student_created").on(t.student, t.createdAt),
   index("attempts_created").on(t.createdAt),
+  uniqueIndex("attempts_student_client_key").on(t.student, t.clientKey),
 ]);
 
 export const savedQuestions = pgTable("saved_questions", {
@@ -805,9 +810,67 @@ export const libraryArticles = pgTable("library_articles", {
   wordCount: integer("word_count").notNull().default(0),
   status: text().notNull().default("draft"), // "draft" | "published"
   question: jsonb().$type<Record<string, unknown> | null>(),
+  // Stable id from an imported JSON file, so re-importing updates (never duplicates) the piece.
+  externalId: text("external_id"),
+  // Ordered content blocks: [{ type: "paragraph" | "image" | "chart", ... }].
+  // Null for text-only pieces, which keep using `body`.
+  blocks: jsonb().$type<Record<string, unknown>[] | null>(),
   createdBy: integer("created_by"),
   updatedBy: integer("updated_by"),
   publishedAt: timestamp("published_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-}, (t) => [index("library_articles_status").on(t.status, t.publishedAt)]);
+}, (t) => [
+  index("library_articles_status").on(t.status, t.publishedAt),
+  uniqueIndex("library_articles_external_id").on(t.externalId),
+]);
+
+// ─────────────── STUDENT CREDITS (optional, per student) ───────────────
+// Credit mode is OFF for every student until the super admin enables it for
+// that individual. Balances change only through the credit_* SQL functions
+// (see the migration), which lock the account row, so concurrent requests can
+// never double-charge or go negative. Every change is one ledger row with a
+// unique key (attempt id, hold settlement, grant batch + recipient).
+export const creditAccounts = pgTable("credit_accounts", {
+  studentId: integer("student_id").primaryKey(),
+  enabled: boolean().notNull().default(false),
+  balance: integer().notNull().default(0),
+  enabledBy: integer("enabled_by"),
+  enabledAt: timestamp("enabled_at"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+// kind: "grant" | "topup" | "correction" | "debit" | "settle"
+export const creditLedger = pgTable("credit_ledger", {
+  id: serial().primaryKey(),
+  studentId: integer("student_id").notNull(),
+  key: text().notNull(),
+  delta: integer().notNull(),
+  balanceAfter: integer("balance_after").notNull(),
+  kind: text().notNull(),
+  reason: text().notNull().default(""),
+  actorId: integer("actor_id"),
+  batchId: text("batch_id"),
+  attemptId: integer("attempt_id"),
+  ref: text().notNull().default(""),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => [
+  uniqueIndex("credit_ledger_key").on(t.key),
+  index("credit_ledger_student").on(t.studentId, t.createdAt),
+  index("credit_ledger_batch").on(t.batchId),
+]);
+// Credits held for a timed / batch-submitted module (one hold per module of a
+// sitting). status: "held" | "settled" | "released"
+export const creditHolds = pgTable("credit_holds", {
+  id: serial().primaryKey(),
+  key: text().notNull(),
+  studentId: integer("student_id").notNull(),
+  amount: integer().notNull(),
+  charged: integer().notNull().default(0),
+  status: text().notNull().default("held"),
+  ref: text().notNull().default(""),
+  createdAt: timestamp("created_at").defaultNow(),
+  settledAt: timestamp("settled_at"),
+}, (t) => [
+  uniqueIndex("credit_holds_key").on(t.key),
+  index("credit_holds_student").on(t.studentId, t.status),
+]);

@@ -32,6 +32,9 @@
 <link rel="stylesheet" href="/platform.css"/>
 <link rel="stylesheet" href="/learning.css"/>
 <link rel="stylesheet" href="/features.css"/>
+<link rel="stylesheet" href="/workspace.css"/>
+<link rel="stylesheet" href="/library.css"/>
+<link rel="stylesheet" href="/export.css"/>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root[data-theme="dark"]{
@@ -751,6 +754,14 @@ li[data-list="ordered"]{list-style-type:decimal}
 <script src="/practice.js"></script>
 <!-- Profiles, leaderboard privacy, subject access, announcements and the Reading Library -->
 <script src="/features.js"></script>
+<!-- Shared Full Mock question workspace (split panes, divider, review), section navigation guard -->
+<script src="/workspace.js"></script>
+<!-- Optional student credits (balance, reservations, receipts) and the super-admin credit controls -->
+<script src="/credits.js"></script>
+<!-- Reading Library rich editor (paragraphs, images, charts) and JSON import -->
+<script src="/library.js"></script>
+<!-- Download question sets as PDF or JSON -->
+<script src="/export.js"></script>
 <script>
 // ════════════════════════════════════════════════════════════
 //  Fast&Free SAT — single-page studio (vanilla JS)
@@ -881,7 +892,15 @@ async function applyBranding(){
 async function api(path, opts={}) {
   const token=localStorage.getItem(LS.token);
   const headers={"content-type":"application/json", ...(token?{authorization:"Bearer "+token}:{}), ...(opts.headers||{})};
-  const r = await fetch("/api/"+path, { ...opts, headers });
+  // A page's reads belong to the navigation that started them: if the user
+  // has moved on by the time the answer arrives, it is dropped (never
+  // resolves) so it can't paint the old page, rewrite the URL or reopen a
+  // session. Writes always complete; background reads pass {bg:true}.
+  const guard=!opts.bg&&(!opts.method||opts.method==="GET")&&typeof NAV==="object";
+  const seq=guard?NAV.seq:0;
+  const {bg,...fetchOpts}=opts;
+  const r = await fetch("/api/"+path, { ...fetchOpts, headers });
+  if(guard&&seq!==NAV.seq) return new Promise(()=>{});
   if (!r.ok) {
     let m="Request failed",data=null; try{data=await r.json(); m=data.error||m}catch{}
     // An admin reset the password: hold everything until a new one is chosen.
@@ -1672,7 +1691,7 @@ function logout(){
 
 // Validate a cached student session against the server; sign out if it's stale.
 async function validateSession(){
-  try{ const r=await api("auth/me"); if(r?.user){ localStorage.setItem(LS.user,JSON.stringify(r.user)); state.user=loadUser(); } }
+  try{ const r=await api("auth/me",{bg:true}); if(r?.user){ localStorage.setItem(LS.user,JSON.stringify(r.user)); state.user=loadUser(); } }
   catch{ localStorage.removeItem(LS.token); localStorage.removeItem(LS.user); state.user=null; render(); }
 }
 
@@ -1732,8 +1751,7 @@ function render(){
   if(state.user) plStartInbox();
   if(isAdminPath()){
     if(!state.user || state.user.role!=="admin"){ app.innerHTML=adminLandingHTML(); return; }
-    app.innerHTML=shellHTML();
-    document.getElementById("scrim").onclick=closeNav;
+    paintShell();
     routeView();
     return;
   }
@@ -1742,8 +1760,7 @@ function render(){
     if(!state.user){ navTo("/sign-in"); return; }
     if(state.user.role!=="mentor"){ navTo(appPathFor(state.user)); return; }
     if(state.user.status!=="active"){ app.innerHTML=mentorActivationHTML(); return; }
-    app.innerHTML=shellHTML();
-    document.getElementById("scrim").onclick=closeNav;
+    paintShell();
     routeView();
     return;
   }
@@ -1752,8 +1769,7 @@ function render(){
     if(!state.user){ navTo("/sign-in"); return; }
     if(state.user.role!=="student"){ navTo(appPathFor(state.user)); return; }
     if(!ACC.data) primeAccess();
-    app.innerHTML=shellHTML();
-    document.getElementById("scrim").onclick=closeNav;
+    paintShell();
     routeView();
     return;
   }
@@ -2383,6 +2399,16 @@ function shellHTML(){
     </div>
   </div>`;
 }
+// Rebuild the app shell for the current view while keeping the section
+// list's own scroll position (long admin menus stay where they were).
+function paintShell(){
+  const app=document.getElementById("app");
+  const nav=app.querySelector(".side-nav"), keep=nav?nav.scrollTop:0;
+  app.innerHTML=shellHTML();
+  document.getElementById("scrim").onclick=closeNav;
+  const n2=app.querySelector(".side-nav");
+  if(n2){ n2.scrollTop=keep; const a=n2.querySelector(".nav-item.active"); if(a&&!keep){ const r=a.getBoundingClientRect(), nr=n2.getBoundingClientRect(); if(r.bottom>nr.bottom||r.top<nr.top) a.scrollIntoView({block:"nearest"}); } }
+}
 function openNav(){ document.getElementById("shell")?.classList.add("nav-open"); }
 function closeNav(){ document.getElementById("shell")?.classList.remove("nav-open"); }
 function go(view, extra={}){
@@ -2392,6 +2418,7 @@ function go(view, extra={}){
   if(view==="bank" && !("bfPage" in extra)) extra={...extra,bfPage:null};
   if(view==="practice" && !("practiceSet" in extra) && "sid" in extra) extra={...extra,practiceSet:null};
   if(view==="lessons" && !("lessonId" in extra)) extra={...extra,lessonId:null};
+  if(view==="users" && !("userId" in extra)) extra={...extra,userId:null};
   if(view==="learn" && !("learnLessonId" in extra)) extra={...extra,learnLessonId:null};
   if(typeof lxStopPlayer==="function") lxStopPlayer();
   if(view!=="testsit") leaveTestSit();
@@ -2418,8 +2445,9 @@ const ROUTE_KEYS={
   lessons:["lessonId"], learn:["learnClassId","learnLessonId","learnTab"], review:["reviewType"],
   announcements:["announcementId"], library:["articleId"], testsit:["attemptId"],
   testedit:["testId"], testreview:["testId"], testpreview:["testId"], settings:["settingsTab"], limits:["accessStudent"],
+  leaderboards:["lbk","lbp","lbc","lbq","lbpg"], users:["userId"],
 };
-const ROUTE_ID={practice:"sid",announcements:"announcementId",library:"articleId",lessons:"lessonId"};
+const ROUTE_ID={practice:"sid",announcements:"announcementId",library:"articleId",lessons:"lessonId",users:"userId"};
 try{ history.scrollRestoration="manual"; }catch{}
 function rolePath(){ return appPathFor(state.user); }
 function routeUrl(){
@@ -2433,7 +2461,8 @@ function routeUrl(){
   for(const k of keys){
     if(k===idKey||k==="bankStage") continue;
     const val=state[k]; if(val==null||val==="") continue;
-    if(k==="bf"){ for(const [fk,fv] of Object.entries(val||{})) if(Array.isArray(fv)&&fv.length) q.set(fk,fv.join(",")); continue; }
+    // One parameter per value (?skills=Boundaries&skills=Transitions): names may contain commas.
+    if(k==="bf"){ for(const [fk,fv] of Object.entries(val||{})) if(Array.isArray(fv)) fv.forEach(x=>q.append(fk,x)); continue; }
     q.set(k,typeof val==="object"?JSON.stringify(val):String(val));
   }
   const qs=q.toString();
@@ -2462,7 +2491,7 @@ function routeFromUrl(){
   else if(idKey&&segs[2]) next[idKey]=/^\d+$/.test(segs[2])?Number(segs[2]):segs[2];
   if(view==="bank"){
     next.bankStage=segs[2]==="results"?"results":null;
-    const bf={}; for(const fk of ["subjects","difficulties","domains","skills","status","shuffle"]){ const v=q.get(fk); if(v) bf[fk]=v.split(",").filter(Boolean); }
+    const bf={}; for(const fk of ["subjects","difficulties","domains","skills","status","shuffle"]){ const v=routeList(fk,q.getAll(fk)); if(v.length) bf[fk]=v; }
     next.bf=Object.keys(bf).length?bf:null;
   }
   for(const k of keys){
@@ -2472,6 +2501,16 @@ function routeFromUrl(){
   if(view==="practice"&&segs[2]!=="local") next.practiceSet=null;
   Object.assign(state,next);
   return true;
+}
+// Filter values from the URL. Older links joined values with commas; split
+// those only where a piece is not itself a known domain / skill name.
+function routeList(k,vals){
+  const known=new Set(k==="domains"?Object.values(SECTIONS).flatMap(s=>s.categories):k==="skills"?Object.values(SUBSECTIONS).flat():[]);
+  return vals.flatMap(v=>known.size&&known.has(v)?[v]:v.split(",").map(x=>x.trim())).filter(Boolean)
+    .reduce((out,x)=>{ // re-join comma pieces of a known name ("Form", "structure", "and sense")
+      const last=out.length?out[out.length-1]+", "+x:null;
+      if(known.size&&last&&!known.has(out[out.length-1])&&[...known].some(n=>n.startsWith(last))){ out[out.length-1]=last; } else out.push(x);
+      return out; },[]);
 }
 // Scroll back to where the page was left, once its content has loaded. Gives
 // up as soon as the reader scrolls, types or touches.
@@ -2524,7 +2563,15 @@ function routeView(){
   if(typeof PQ_closeNav==="function") PQ_closeNav(false);
   // A runner/pause scroll lock never outlives the test sitting.
   if(state.view!=="testsit"){ if(typeof ftExitRunner==="function"&&document.body.classList.contains("bb-on")) ftExitRunner(); document.body.classList.remove("test-paused"); }
+  if(typeof qwUnlockScroll==="function"&&!document.getElementById("ftModal")) qwUnlockScroll();
+  // New navigation generation: replies to the previous page are dropped, and
+  // the previous page is cleared at once instead of lingering until the new
+  // one has loaded.
+  if(typeof navBump==="function") navBump();
+  const c=$c(); if(c) c.innerHTML=`<div class="spin" role="status" aria-label="Loading"></div>`;
   m[state.view]();
+  // Credit UI follows the server's current answer (stays hidden while off).
+  if(state.user?.role==="student"&&typeof CR_load==="function"){ CR_paint(); CR_load(true); }
 }
 const $c=()=>document.getElementById("content");
 function loading(){ $c().innerHTML=`<div class="spin"></div>`; }
@@ -2538,14 +2585,11 @@ function deadlineText(value){
   const hours=Math.ceil(diff/3600000);
   return hours<24?`Due in ${hours} hour${hours===1?"":"s"}`:`Due in ${Math.ceil(hours/24)} day${Math.ceil(hours/24)===1?"":"s"} · ${due.toLocaleDateString()}`;
 }
-function fullQuestionHTML(q,meta=""){
-  const choices=q.choices?Object.entries(q.choices).map(([letter,text])=>`<div class="monitor-item"><b>${esc(letter)}.</b> ${mathText(text)}${questionMediaHTML(q.choiceImages?.[letter],`Answer choice ${letter}`,"choice")}</div>`).join(""):"";
-  return `<div class="panel2" style="padding:1rem;border:1px solid var(--border);border-radius:var(--r);margin-top:.7rem">
-    <div class="umeta">${esc(SECTIONS[q.section]?.label||q.section)} · ${esc(q.category)}${q.subcategory?` · ${esc(q.subcategory)}`:""}${meta?` · ${meta}`:""}</div>
-    ${q.passage?`<div class="q-passage" style="margin-top:.7rem">${mathText(q.passage)}</div>`:""}
-    ${questionMediaHTML(q.questionImage,"Question graphic")}
-    <div class="q-prompt" style="font-size:1rem;margin-top:.7rem">${mathText(q.prompt)}</div>${choices}
-    <div class="explain" style="margin-top:.7rem"><h4>Correct answer: ${mathText(q.answer)}</h4><p>${mathText(q.explanation||"No explanation added.")}</p></div></div>`;
+// Read-only question review / preview for every role: the shared Full Mock
+// workspace (workspace.js) with the submitted answer, the correct answer and
+// the full explanation.
+function fullQuestionHTML(q,meta="",opts={}){
+  return `<div class="qw-review-wrap">${qwReviewHTML(q,{meta,...opts})}</div>`;
 }
 
 async function viewStudentDashboard(){
@@ -2558,7 +2602,7 @@ async function viewStudentDashboard(){
   const open=tasks.filter(t=>t.completed<t.total).sort((a,b)=>new Date(a.dueAt)-new Date(b.dueAt));
   const next=open[0];
   $c().innerHTML=`<div class="page-head fade"><h1>Welcome back, ${esc(state.user.name)}</h1><p>Your deadlines, practice pace, and progress are together in one place.</p></div>
-    <div class="fade">${lxDashboardCardHTML(learnOv)}${ftDashboardHTML(examTasks)}${vbDashboardHTML(vocabTasks)}<div class="stat-grid">${periodCard("Today",activity.periods.daily,"target")}${periodCard("This week",activity.periods.weekly,"layers")}${periodCard("All time",activity.periods.total,"trophy")}</div>
+    ${CR_dashHTML()}<div class="fade">${lxDashboardCardHTML(learnOv)}${ftDashboardHTML(examTasks)}${vbDashboardHTML(vocabTasks)}<div class="stat-grid">${periodCard("Today",activity.periods.daily,"target")}${periodCard("This week",activity.periods.weekly,"layers")}${periodCard("All time",activity.periods.total,"trophy")}</div>
     ${openTests.length?`<div class="panel"><h2>${svg("layers","ic-sm")} Tests in progress</h2>${openTests.map(t=>{
       const paused=t.status==="paused";
       return `<div style="display:flex;justify-content:space-between;gap:1rem;align-items:center;flex-wrap:wrap;margin-top:.7rem"><div><b>${esc(t.testTitle)}</b><div class="umeta">${t.timed===false?(paused?"Paused":"In progress"):paused?"Paused":"Clock running"} · Module ${t.moduleIndex+1}, question ${(t.currentQuestionIndex||0)+1} · ${t.timed===false?`Untimed${t.practiceScope==="modules"?" · selected modules":""}`:`${t.remainingTimeSeconds==null?"—":fmtTime(t.remainingTimeSeconds)} left`}</div></div><button class="btn btn-primary btn-sm" onclick="resumeTestFromCard(${t.testSessionId})">${svg(paused?"play":"clock","ic-sm")} Resume test</button></div>`;
@@ -2566,6 +2610,7 @@ async function viewStudentDashboard(){
     ${next?`<div class="panel"><h2>${svg("pages","ic-sm")} Next deadline</h2><div style="display:flex;justify-content:space-between;gap:1rem;align-items:center;flex-wrap:wrap"><div><b>${esc(next.title)}</b><div class="umeta">${esc(next.classroom?.name||"Class task")} · ${next.completed}/${next.total} complete · ${esc(deadlineText(next.dueAt))}</div></div><button class="btn btn-primary btn-sm" onclick="go('tasks')">Open My Tasks</button></div></div>`:`<div class="panel"><h2>${svg("check","ic-sm")} No pending deadlines</h2><p class="umeta">Assigned work appears here as soon as your mentor publishes it.</p></div>`}
     <div class="panel"><h2>${svg("rush","ic-sm")} Practice access</h2>${usage.limits?plUsageHTML(usage):`<p class="umeta">${usage.enrolled?"Unlimited Question Bank and Question Rush practice.":`${usage.used} of ${usage.limit} questions used today. ${usage.remaining} remaining.`}</p>`}<div style="display:flex;gap:.7rem;flex-wrap:wrap;margin-top:.8rem">${navAllowed("bank")?`<button class="btn btn-primary btn-sm" onclick="go('bank')">Question Bank</button>`:""}<button class="btn btn-ghost btn-sm" onclick="go('review')">Review saved &amp; mistaken</button></div></div><div id="dashContinue"></div></div>`;
   if(navAllowed("bank")) renderContinue("bank","dashContinue");
+  CR_paint();
 }
 
 let TASK_CACHE=[];
@@ -2589,7 +2634,7 @@ async function viewReview(){
   const tab=state.reviewType||"mistakes";
   const rows=tab==="mistakes"?REVIEW_CACHE.mistakes:REVIEW_CACHE.savedQuestions;
   const questions=rows.map(row=>row.question);
-  const details=rows.map(row=>fullQuestionHTML(row.question,tab==="mistakes"?`Answered ${esc(row.attempt.selected||"—")} on ${new Date(row.attempt.createdAt).toLocaleDateString()}`:`Saved ${new Date(row.saved.createdAt).toLocaleDateString()}`)).join("");
+  const details=rows.map(row=>fullQuestionHTML(row.question,tab==="mistakes"?`Answered on ${new Date(row.attempt.createdAt).toLocaleDateString()}`:`Saved ${new Date(row.saved.createdAt).toLocaleDateString()}`,tab==="mistakes"?{given:row.attempt.selected||""}:{})).join("");
   $c().innerHTML=`<div class="page-head fade"><h1>Review questions</h1><p>Keep saved questions and past mistakes in separate, focused queues.</p></div><div class="calc-tabs fade"><button class="${tab==='mistakes'?'on':''}" onclick="go('review',{reviewType:'mistakes'})">Mistaken (${REVIEW_CACHE.mistakes.length})</button><button class="${tab==='saved'?'on':''}" onclick="go('review',{reviewType:'saved'})">Saved (${REVIEW_CACHE.savedQuestions.length})</button></div><div class="fade">${questions.length?`<button class="btn btn-primary btn-sm" onclick="startReview('${tab}')">Practice this review queue</button>${details}`:`<div class="empty"><p>No ${tab==='mistakes'?'mistaken':'saved'} questions yet.</p></div>`}</div>`;
 }
 function startReview(type){
@@ -2626,7 +2671,7 @@ function renderMentorBank(){
     <div class="panel fade"><h2>${svg("plus","ic-sm")} Add a question to the platform</h2>
       <p class="umeta">New questions go straight into the shared bank, so they are available to every panel and to full-length tests.</p>
       <div style="display:flex;gap:.6rem;flex-wrap:wrap;margin-top:.8rem"><button class="btn btn-primary btn-sm" onclick="mentorNewQuestion()">${svg("edit","ic-sm")} Write a new question</button>
-      ${bankImportButtonHTML("MB.filter")}<span class="umeta" style="align-self:center">Import JSON adds a batch of questions to one domain (filter by section and domain to preselect it).</span></div>
+      ${bankImportButtonHTML("MB.filter")}${EXP_buttonHTML({scope:"bank",key:"mentorbank",filters:()=>MB.filter})}<span class="umeta" style="align-self:center">Import JSON adds a batch of questions to one domain (filter by section and domain to preselect it).</span></div>
       <div id="mForm" style="margin-top:1rem"></div></div>
     <div class="panel fade"><h2>${svg("bank","ic-sm")} Question bank</h2>
       <div id="mbBar">${questionFilterBarHTML(MB.filter,"MB_setFilter")}</div>
@@ -3134,7 +3179,7 @@ function renderAllQuestions(){
       <div class="pickbar">
         <button class="btn btn-ghost btn-sm" onclick="AQ_resetFilter()">Reset filters</button>
         <button class="btn btn-primary btn-sm" onclick="aqNewQuestion()">${svg("plus","ic-sm")} New question</button>
-        ${bankImportButtonHTML("AQ.filter")}
+        ${bankImportButtonHTML("AQ.filter")}${EXP_buttonHTML({scope:"bank",key:"allq",filters:()=>AQ.filter})}
         <span class="umeta" id="aqCount"></span>
       </div></div>
     <div class="panel fade"><h2>${svg("layers","ic-sm")} Add the selection to a full-length test</h2>
@@ -3429,7 +3474,7 @@ async function deleteTask(id){
 let statsCache=null;
 async function getStats(force){
   if(statsCache && !force) return statsCache;
-  try{ statsCache=await api("questions/stats"); }catch{ statsCache=[]; }
+  try{ statsCache=await api("questions/stats"); }catch{ return statsCache||null; }
   return statsCache;
 }
 function countFor(stats,section,category,subcategory){
@@ -3479,14 +3524,9 @@ function restoreActiveQuiz(){
 function renderRushQ(){
   if(R.idx>=R.list.length){ endRush(); return; }
   const q=R.list[R.idx];
-  let area;
-  if(q.type==="spr"){
-    area=`<input class="spr-input" id="rsprIn" placeholder="Type & press Enter" onkeydown="if(event.key==='Enter')rushAnswer(this.value)"/>`;
-  } else {
-    area=`<div class="choices">`+["A","B","C","D"].map(l=>q.choices&&q.choices[l]!=null?
-      `<button class="choice" data-l="${l}" onclick="rushAnswer('${l}')"><span class="ltr">${l}</span><span class="ct">${mathText(q.choices[l])}${questionMediaHTML(q.choiceImages?.[l],`Answer choice ${l}`,"choice")}</span></button>`:"").join("")+`</div>`;
-  }
-  $c().innerHTML=`<div class="q-shell fade">
+  const work=qwWorkspaceHTML(q,{num:R.answered+1,section:q.section,mode:"answer",given:R.sel||"",onPick:"rushPick",onSpr:"rushSprInput",onSprEnter:"rushAnswer(document.getElementById('sprIn').value)",
+    meta:esc(q.category),headExtra:q.section==="math"?`<button type="button" class="bb-tool qw-tool" onclick="toggleDesmosFloat()">${svg("calc","ic-sm")}<span>Calculator</span></button>`:""});
+  $c().innerHTML=`<div class="q-shell fade pq">
     <div class="rush-hero">
       <div class="rush-timer ${R.timeLeft<=10?'low':''}" id="rushTimer">${fmtTime(R.timeLeft)}</div>
       <div class="rush-meta">
@@ -3495,48 +3535,47 @@ function renderRushQ(){
         <div class="rm"><div class="n" id="rAns">${R.answered}</div><div class="l">Answered</div></div>
       </div>
     </div>
-    <div class="q-card">
-      <div class="q-topline"><span class="pill pill-sec">${esc(SECTIONS[q.section].label)}</span><span class="pill pill-muted">${esc(q.category)}</span><span style="flex:1"></span>${q.section==="math"?`<button class="btn btn-ghost btn-sm" onclick="toggleDesmosFloat()">${svg("graph","ic-sm")} Desmos</button>`:""}</div>
-      ${q.passage?`<div class="q-passage">${mathText(q.passage)}</div>`:""}
-      ${questionMediaHTML(q.questionImage,"Question graphic")}
-      <div class="q-prompt">${mathText(q.prompt)}</div>
-      ${area}
-    </div>
-    <div style="text-align:center;margin-top:1rem"><button class="btn btn-ghost btn-sm" onclick="endRush()">End rush</button></div>
+    <div class="bb bb-inline pq-work rush-work">${work}</div>
+    <nav class="pq-bar" aria-label="Rush controls"><button type="button" class="bb-btn" onclick="endRush()">End rush</button><span></span>
+      ${q.type==="spr"?`<button type="button" class="bb-btn primary" onclick="rushAnswer(document.getElementById('sprIn').value)">Submit</button>`:`<span class="umeta">Pick an answer to submit</span>`}</nav>
   </div>`;
-  if(q.type==="spr") setTimeout(()=>document.getElementById("rsprIn")?.focus(),30);
+  typesetMath($c()); if(typeof dfAfterRender==="function") dfAfterRender();
+  if(q.type==="spr") setTimeout(()=>document.getElementById("sprIn")?.focus(),30);
 }
+function rushPick(l){ rushAnswer(l); }
+function rushSprInput(v){ R.sel=v; }
 function updateRushTimer(){ const t=document.getElementById("rushTimer"); if(t){ t.textContent=fmtTime(R.timeLeft); t.classList.toggle("low",R.timeLeft<=10);} }
 async function rushAnswer(val){
   if(!R.active||R.pending) return;
   const q=R.list[R.idx];
   const sel=String(val).trim();
+  if(!sel) return;
   const lockInputs=on=>{
-    document.querySelectorAll(".choice").forEach(c=>c.disabled=on);
-    const inp=document.getElementById("rsprIn"); if(inp) inp.disabled=on;
+    document.querySelector(".rush-work .bb-opts")?.classList.toggle("qw-locked",on);
+    const inp=document.getElementById("sprIn"); if(inp) inp.disabled=on;
   };
   R.pending=true; lockInputs(true);
   let graded=null, error=null;
-  try{ graded=await gradeAnswer(q,sel,"rush"); }catch(e){ error=e; }
+  R.key=R.key||newClientKey();
+  try{ graded=await gradeAnswer(q,sel,"rush",R.key); }catch(e){ error=e; }
+  if(graded) R.key=null;
   R.pending=false;
   if(!R.active||R.list[R.idx]!==q) return;
   if(!graded){
     // Not counted: the same question stays up so it can be answered again.
+    if(error?.data?.outOfCredits){ if(typeof CR_outOfCredits==="function") CR_outOfCredits(error.data); endRush(); return; }
     toast(error?.message||"Could not check your answer. Try again.");
     lockInputs(false);
-    if(q.type==="spr") document.getElementById("rsprIn")?.focus();
+    if(q.type==="spr") document.getElementById("sprIn")?.focus();
     return;
   }
   const correct=graded.correct;
   R.answered++;
   if(correct){ R.score++; R.streak++; R.best=Math.max(R.best,R.streak);} else { R.streak=0; }
   // brief visual feedback
-  if(q.type!=="spr"){
-    document.querySelectorAll(".choice").forEach(c=>{ c.disabled=true;
-      if(c.dataset.l===graded.answer)c.classList.add("right"); else if(c.dataset.l===sel)c.classList.add("wrong"); });
-  } else {
-    const inp=document.getElementById("rsprIn"); if(inp){inp.disabled=true; inp.style.borderColor=correct?"var(--mint)":"var(--red)";}
-  }
+  R.sel="";
+  const host=document.querySelector(".rush-work");
+  if(host){ host.innerHTML=qwWorkspaceHTML(q,{num:R.answered,section:q.section,mode:"answer",result:{selected:sel,correct,answer:graded.answer,acceptableAnswers:graded.acceptableAnswers},meta:esc(q.category)}); typesetMath(host); }
   document.getElementById("rScore").textContent=R.score;
   document.getElementById("rStreak").textContent=R.streak;
   document.getElementById("rAns").textContent=R.answered;
@@ -4828,7 +4867,7 @@ async function viewClasses(){
     const isAdmin=state.user.role==="admin";
     const cards=list.map(classroom=>{
       const students=(classroom.students||[]).map(student=>{
-        const mistakes=(student.mistakes||[]).map(row=>fullQuestionHTML(row.question,`Answered ${esc(row.attempt.selected||"—")} · ${new Date(row.attempt.createdAt).toLocaleString()}`)).join("");
+        const mistakes=(student.mistakes||[]).map(row=>fullQuestionHTML(row.question,`Answered ${new Date(row.attempt.createdAt).toLocaleString()}`,{given:row.attempt.selected||""})).join("");
         const saved=(student.savedQuestions||[]).map(row=>fullQuestionHTML(row.question,`Saved ${new Date(row.saved.createdAt).toLocaleDateString()}`)).join("");
         const periods=student.periods||{daily:{attempts:0,accuracy:0},weekly:{attempts:0,accuracy:0},total:{attempts:student.attempts,accuracy:student.accuracy}};
         return `<div class="student-monitor"><div style="display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap"><div><div class="uname">${esc(student.displayName)}</div><div class="umeta">${esc(student.email||student.username||student.phone||"—")}</div></div><div style="display:flex;gap:.5rem;flex-wrap:wrap">${isAdmin?"":`<button class="btn btn-ghost btn-sm" onclick="classStudentAction(${classroom.id},${student.id},'remove')">Remove</button><button class="btn btn-danger btn-sm" onclick="classStudentAction(${classroom.id},${student.id},'ban')">Ban</button>`}</div></div>
@@ -4891,7 +4930,8 @@ async function classStudentAction(classId,studentId,action){
 async function viewDashboard(){
   crumbs([{label:"Dashboard"}]);
   loading();
-  const [stats,welcome]=await Promise.all([getStats(true),api("pages/dashboard").catch(()=>null)]);
+  const [stats0,welcome]=await Promise.all([getStats(true),api("pages/dashboard").catch(()=>null)]);
+  const stats=stats0||[];
   const total=stats.reduce((a,s)=>a+Number(s.count),0);
   const math=countFor(stats,"math"), ebrw=countFor(stats,"ebrw");
   const seedBtn=total===0?`<button class="btn btn-mint" onclick="seedBank()">${svg("plus","ic-sm")} Seed sample bank</button>`:"";
@@ -5405,7 +5445,32 @@ async function viewStudents(){
   renderStudentMonitorList();
 }
 
+// One person's admin profile, by stable user id (/admin/users/<id>). Opened
+// from the super-admin leaderboard and from user lists. The server decides
+// what the viewer may see: /api/students and /api/users refuse non-staff.
+async function viewUserProfile(id){
+  crumbs([{label:"Users & Stats",onclick:"go('users')"},{label:"Profile"}]); loading();
+  let list=[], mon=null;
+  try{ [list,mon]=await Promise.all([api("users"),api("students")]); }
+  catch(e){ $c().innerHTML=`<div class="empty fade"><div class="ei">${svg("lock")}</div><h3>Profile not available</h3><p>${esc(e.message)}</p><button class="btn btn-ghost" onclick="history.length>1?history.back():go('users')">${svg("back","ic-sm")} Back</button></div>`; return; }
+  if(state.view!=="users"||Number(state.userId)!==id) return;
+  const u=list.find(x=>x.id===id);
+  if(!u){ $c().innerHTML=`<div class="empty fade"><h3>User not found</h3><p>This account may have been removed.</p><button class="btn btn-ghost" onclick="history.back()">${svg("back","ic-sm")} Back</button></div>`; return; }
+  crumbs([{label:"Users & Stats",onclick:"go('users')"},{label:u.displayName||"Profile"}]);
+  US.data={...mon,students:(mon.students||[]).filter(s=>s.id===id)}; US.filter={q:"",classId:"",mentorId:""}; US.open=new Set([id]);
+  const isSuper=!!state.user.profile?.superAdmin;
+  const n=esc(u.displayName||"Student").replace(/'/g,"&#39;");
+  $c().innerHTML=`<div class="page-head fade"><h1>${esc(u.displayName||"Student")}</h1><p>${u.username?`@${esc(u.username)} · `:""}${esc(u.role)} · ${esc(u.status||"active")} · user #${u.id}${u.createdAt?` · joined ${esc(new Date(u.createdAt).toLocaleDateString())}`:""}</p></div>
+    <div class="panel fade"><div style="display:flex;gap:.45rem;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm" onclick="history.length>1?history.back():go('users')">${svg("back","ic-sm")} Back</button>
+      ${u.role==="student"?`<button class="btn btn-ghost btn-sm" onclick="PL_userLimits(${u.id},'${n}')">Limits</button><button class="btn btn-ghost btn-sm" onclick="FX_userAccess(${u.id})">Subject access</button>${isSuper?`<button class="btn btn-ghost btn-sm" onclick="go('limits',{accessStudent:${u.id}})">${svg("target","ic-sm")} Credits &amp; limitations</button>`:""}`:""}
+      <button class="btn btn-ghost btn-sm" onclick="PL_resetPassword(${u.id},'${n}')">${svg("lock","ic-sm")} Reset password</button></div>
+      <div class="stat-grid" style="margin-top:1rem"><div class="stat-card"><div class="lbl">Answered</div><div class="val">${u.attempts??0}</div></div><div class="stat-card"><div class="lbl">Accuracy</div><div class="val">${u.attempts?u.accuracy+"%":"—"}</div></div><div class="stat-card"><div class="lbl">Leaderboard</div><div class="val" style="font-size:1.1rem">${u.leaderboardVisible===false?"Hidden":"Visible"}</div></div></div></div>
+    ${u.role==="student"?`<div class="panel fade"><h2>${svg("graph","ic-sm")} Practice and tests</h2><div id="usMonList"></div></div>`:""}`;
+  if(u.role==="student") renderStudentMonitorList();
+}
 async function viewUsers(){
+  if(Number(state.userId)>0) return viewUserProfile(Number(state.userId));
   crumbs([{label:"Users & Stats"}]);
   loading();
   let list=[],ov=null;
@@ -5436,7 +5501,7 @@ async function viewUsers(){
       <button class="btn ${status==="banned"?"btn-ghost":"btn-danger"} btn-sm" onclick="setUserBan(${u.id},${status!=="banned"})">${status==="banned"?"Unban":"Ban"}</button>
       <button class="btn btn-danger btn-sm" onclick="AO_removeUser(${u.id})">${svg("trash","ic-sm")} ${u.role==="mentor"?"Remove mentor…":"Remove student…"}</button></div>`;
     return `<tr>
-      <td><div class="uname">${esc(u.displayName||"Student")}</div><div class="umeta">${esc(login)}</div></td>
+      <td><button type="button" class="linkish uname" onclick="go('users',{userId:${u.id}})">${esc(u.displayName||"Student")}</button><div class="umeta">${esc(login)}</div></td>
       <td><span class="prov-tag">${esc(u.role||"student")}</span></td>
       <td><span class="prov-tag">${esc(status)}</span>${u.mustChangePassword?`<div class="umeta">must change password</div>`:""}</td>
       <td><span class="prov-tag">${esc(u.provider||"password")}</span></td>

@@ -17,7 +17,7 @@ async function loadAccess(force){
   if(state.user?.role!=="student") return null;
   if(ACC.data&&!force&&Date.now()-ACC.at<15000) return ACC.data;
   // One request in flight at a time, however many views ask.
-  if(!ACC.p) ACC.p=api("access").then(d=>{ ACC.data=d; ACC.at=Date.now(); return d; }).catch(()=>ACC.data).finally(()=>{ ACC.p=null; });
+  if(!ACC.p) ACC.p=api("access",{bg:true}).then(d=>{ ACC.data=d; ACC.at=Date.now(); return d; }).catch(()=>ACC.data).finally(()=>{ ACC.p=null; });
   return ACC.p;
 }
 function accSubjects(area){
@@ -48,10 +48,12 @@ function cleanFilters(f,opts){
 function filterDomains(f,subs){ return (f.subjects.length?f.subjects:subs).flatMap(s=>SECTIONS[s]?.categories||[]); }
 // Topics shown are the skills of the chosen domains (or of every offered domain).
 function filterSkills(f,subs){ const doms=f.domains.length?f.domains:filterDomains(f,subs); return doms.flatMap(d=>SUBSECTIONS[d]||[]); }
+// One JSON value: domain and skill names can contain commas ("Form, structure,
+// and sense"), so they are never joined or split on commas.
 function filterQuery(f){
-  const q=new URLSearchParams();
-  for(const k of ["subjects","difficulties","domains","skills","status"]) if(f[k]?.length) q.set(k,f[k].join(","));
-  return q.toString();
+  const o={};
+  for(const k of ["subjects","difficulties","domains","skills","status"]) if(f[k]?.length) o[k]=f[k];
+  return Object.keys(o).length?"f="+encodeURIComponent(JSON.stringify(o)):"";
 }
 function activeFilterCount(f){ return ["subjects","difficulties","domains","skills","status"].reduce((n,k)=>n+(f[k]?.length||0),0); }
 function chipsHTML(f,setter){
@@ -96,7 +98,9 @@ function toggleFilter(f,k,v,on){
 const QB={applied:null,draft:null,open:false,trigger:null,stats:null,statsAt:0,cont:null,starting:false};
 async function qbStats(){
   if(QB.stats&&Date.now()-QB.statsAt<60000) return QB.stats;
-  QB.stats=await getStats(true); QB.statsAt=Date.now(); return QB.stats;
+  const s=await getStats(true);
+  if(s===null) return null;            // failed: never shown as "0 items"
+  QB.stats=s; QB.statsAt=Date.now(); return QB.stats;
 }
 async function viewBank(){
   crumbs([{label:"Question Bank"}]);
@@ -124,11 +128,14 @@ async function viewBank(){
         <button type="button" class="btn btn-ghost btn-sm qb-filter-btn" id="qbFilterBtn" aria-haspopup="dialog" aria-expanded="false" onclick="QB_openFilters(this)">${svg("funnel","ic-sm")} Filters${activeFilterCount(QB.applied)?` <span class="qb-badge">${activeFilterCount(QB.applied)}</span>`:""}</button></div>
     </div>
     ${activeFilterCount(QB.applied)?`<div class="qb-applied fade" aria-label="Last applied filters"><span class="umeta">Last filters:</span>${appliedChipsHTML(QB.applied)}<button type="button" class="btn btn-primary btn-xs" onclick="QB_startWith(QB.applied)">${svg("rush","ic-sm")} Practise again</button><button type="button" class="btn btn-ghost btn-xs" onclick="QB_clearApplied()">Clear</button></div>`:""}
-    <div id="qbCards">${subs.map(k=>qbSubjectHTML(k,null)).join("")}</div>`;
+    ${CR_costHTML()}<div id="qbCards">${subs.map(k=>qbSubjectHTML(k,null)).join("")}</div>`;
+  CR_paint();
   QB_renderContinue();
   const stats=await statsP;
   if(state.view!=="bank") return;
-  const host=document.getElementById("qbCards"); if(host) host.innerHTML=subs.map(k=>qbSubjectHTML(k,stats)).join("");
+  const host=document.getElementById("qbCards"); if(!host) return;
+  if(stats===null){ host.insertAdjacentHTML("afterbegin",`<p class="st-note qb-statfail" role="alert">${svg("info","ic-sm")} Question counts couldn't be loaded. Practice still works — <button type="button" class="linkish" onclick="viewBank()">Retry</button></p>`); return; }
+  host.innerHTML=subs.map(k=>qbSubjectHTML(k,stats)).join("");
 }
 // The original subject + domain cards.
 function qbSubjectHTML(k,stats){
@@ -179,12 +186,12 @@ function QB_openFilters(trigger,context){
       <div class="qbf-head"><b id="qbfTitle">Filters</b><span class="umeta" id="qbfCount" role="status" aria-live="polite">Counting…</span>
         <button type="button" class="btn btn-ghost btn-xs" onclick="QB_closeFilters(true)" aria-label="Close filters">${svg("x","ic-sm")}</button></div>
       <div class="qbf-body" id="qbfBody"></div>
-      <div class="qbf-foot"><button type="button" class="btn btn-ghost btn-sm" onclick="QB_draftSet('*',null,false)">Clear all</button><span class="spacer"></span>
+      ${CR_costHTML()}<div class="qbf-foot"><button type="button" class="btn btn-ghost btn-sm" onclick="QB_draftSet('*',null,false)">Clear all</button><span class="spacer"></span>
         <button type="button" class="btn btn-ghost btn-sm" onclick="QB_closeFilters(true)">Cancel</button>
         <button type="button" class="btn btn-primary btn-sm" id="qbfStart" onclick="QB_startFiltered()">${svg("rush","ic-sm")} Start practice</button></div>
     </div>`;
   document.body.appendChild(el);
-  QB_paintDraft();
+  QB_paintDraft(); CR_paint();
   QB_place();
   setTimeout(()=>el.querySelector(".qbf-body input, .qbf-body summary")?.focus(),0);
 }
@@ -241,18 +248,31 @@ document.addEventListener("keydown",e=>{
     else if(!e.shiftKey&&document.activeElement===f[f.length-1]){ e.preventDefault(); f[0].focus(); }
   }
 },true);
+// Three distinct states: counting (Start waits), failed (Retry — not a
+// zero), and a real count. Every toggle bumps the sequence immediately, so a
+// slower answer for an earlier selection can never overwrite the latest one.
 let qbCountT=null, qbCountSeq=0;
 function QB_count(){
   clearTimeout(qbCountT);
-  const el=document.getElementById("qbfCount"); if(el) el.textContent="Counting…";
+  const seq=++qbCountSeq;
+  QB.draftCount=null;
+  const el=document.getElementById("qbfCount"); if(el){ el.textContent="Counting…"; el.className="umeta qbf-count loading"; }
+  const b0=document.getElementById("qbfStart"); if(b0) b0.disabled=true;
+  QB_emptyNote(false);
   qbCountT=setTimeout(async()=>{
-    const seq=++qbCountSeq;
-    try{ const r=await api(`practice/pool?${filterQuery(QB.draft)}&pageSize=5`); if(seq!==qbCountSeq||!QB.open) return;
-      const c=document.getElementById("qbfCount"); if(c) c.textContent=`${r.count} matching question${r.count===1?"":"s"}`;
+    const want=filterQuery(QB.draft);
+    try{ const r=await api(`practice/pool?${want}&pageSize=5`); if(seq!==qbCountSeq||!QB.open) return;
+      const c=document.getElementById("qbfCount"); if(c){ c.textContent=`${r.count} matching question${r.count===1?"":"s"}`; c.className="umeta qbf-count"; }
       const b=document.getElementById("qbfStart"); if(b) b.disabled=!r.count;
       QB.draftCount=r.count; QB_emptyNote(!r.count);
-    }catch(e){ if(seq===qbCountSeq){ const c=document.getElementById("qbfCount"); if(c) c.textContent=e.message; } }
-  },220);
+    }catch(e){
+      if(seq!==qbCountSeq||!QB.open) return;
+      const c=document.getElementById("qbfCount");
+      if(c){ c.className="umeta qbf-count bad"; c.innerHTML=`Couldn't count matches${e.message?` (${esc(e.message)})`:""} · <button type="button" class="linkish" onclick="QB_count()">Retry</button>`; }
+      // Not a zero: the server still decides when Start is pressed.
+      const b=document.getElementById("qbfStart"); if(b) b.disabled=false;
+    }
+  },180);
 }
 function QB_emptyNote(show){
   const body=document.getElementById("qbfBody"); if(!body) return;
@@ -271,8 +291,12 @@ async function QB_startWith(filters,opts={}){
   const shuffle=!!filters.shuffle;
   QB.starting=true;
   const btn=opts.button; const label=btn?.innerHTML; if(btn){ btn.disabled=true; btn.textContent="Starting…"; }
+  const navAt=navCurrent();
   try{
     const s=await api("practice/sessions",{method:"POST",body:JSON.stringify({kind:"bank",filters:f,shuffle,clientKey:newClientKey()})});
+    // The student went to another section meanwhile: the session is saved
+    // (Continue practice) but never pulls them back.
+    if(navStale(navAt)){ QB.cont=null; return false; }
     if(opts.remember!==false){ state.bf=activeFilterCount(f)||shuffle?{...f,...(shuffle?{shuffle:["1"]}:{})}:null; replaceRoute(); }
     QB_closeFilters(false);
     openSession(s);
@@ -287,6 +311,7 @@ async function QB_startWith(filters,opts={}){
 function QB_startFiltered(){
   if(!QB.draft) return;
   if(QB.draftCount===0){ QB_emptyNote(true); return; }   // keep the panel open to adjust
+  if(QB.draftCount==null&&document.getElementById("qbfCount")?.classList.contains("loading")) return; // still counting
   QB_startWith({...QB.draft},{button:document.getElementById("qbfStart")});
 }
 function QB_startDomain(section,domain){
@@ -316,7 +341,8 @@ async function viewChallenge(){
   crumbs([{label:"Challenging Questions"}]);
   await loadAccess();
   if(state.user?.role==="student"&&!accSubjects("challenge").length){ $c().innerHTML=lockedHTML("Challenging Questions"); return; }
-  $c().innerHTML=`<div class="page-head fade"><h1>Challenging Questions</h1><p>Named sets of harder questions. Each set is practised like the Question Bank — move freely between questions, check answers when you're ready, and continue later on any device.</p></div><div id="chContinue"></div><div id="chList"><div class="spin"></div></div>`;
+  $c().innerHTML=`<div class="page-head fade"><h1>Challenging Questions</h1><p>Named sets of harder questions. Each set is practised like the Question Bank — move freely between questions, check answers when you're ready, and continue later on any device.</p></div>${CR_costHTML()}<div id="chContinue"></div><div id="chList"><div class="spin"></div></div>`;
+  CR_paint();
   renderContinue("challenge","chContinue");
   const sets=await ciLoadSets(true);
   const el=document.getElementById("chList"); if(!el) return;
@@ -334,10 +360,11 @@ async function viewChallenge(){
 }
 async function startChallengeSet(setId){
   try{
-    const usage=await api("usage"); const ch=usage.limits?.challengeDaily;
+    const usage=await api("usage",{bg:true}); const ch=usage.limits?.challengeDaily;
     if(ch&&ch.limit!==null&&ch.remaining<=0){ toast(`Daily Challenging Questions limit (${ch.limit}) reached. It resets ${new Date(ch.resetsAt).toLocaleString()}.`); return; }
   }catch{}
-  try{ const s=await api("practice/sessions",{method:"POST",body:JSON.stringify({kind:"challenge",setId,clientKey:newClientKey()})}); openSession(s); }
+  const navAt=navCurrent();
+  try{ const s=await api("practice/sessions",{method:"POST",body:JSON.stringify({kind:"challenge",setId,clientKey:newClientKey()})}); if(navStale(navAt)) return; openSession(s); }
   catch(e){ toast(e.message); }
 }
 
@@ -407,11 +434,10 @@ function itemAt(i){ return P.items[i]; }
 function renderQuestion(){
   const it=itemAt(P.idx); if(!it) return;
   if(P.server){ state.q=P.idx; replaceRoute(); }
-  const crumbsList=P.server?[{label:practiceReturnLabel(P.returnView),onclick:`go('${P.returnView}')`},{label:P.label}]:[{label:practiceReturnLabel(P.returnView),onclick:`go('${P.returnView}')`},{label:P.label}];
-  crumbs(crumbsList);
+  crumbs([{label:practiceReturnLabel(P.returnView),onclick:`go('${P.returnView}')`},{label:P.label}]);
   const q=P.cache.get(it.id);
   if(!q&&!it.locked){
-    $c().innerHTML=practiceFrameHTML(`<div class="q-card" style="margin-top:1rem"><div class="spin"></div></div>`);
+    $c().innerHTML=practiceFrameHTML(`<div class="bb bb-inline pq-work"><main class="bb-work single"><section class="bb-center"><div class="spin"></div></section></main></div>`);
     const want=P.idx;
     ensureQuestions([it.id,itemAt(P.idx+1)?.id,itemAt(P.idx+2)?.id]).then(()=>{ if(P&&P.idx===want&&state.view==="practice") renderQuestion(); })
       .catch(e=>{ if(P&&P.idx===want&&state.view==="practice") $c().innerHTML=practiceFrameHTML(`<div class="q-card" style="margin-top:1rem"><p>${esc(e.message||"Could not load this question.")}</p><button class="btn btn-ghost btn-sm" onclick="renderQuestion()">Try again</button></div>`); });
@@ -422,41 +448,27 @@ function renderQuestion(){
     wirePracticeKeys(); return;
   }
   const result=it.result||(P.results&&P.results[it.id])||null;
-  const [dl,dc]=DIFF[q.difficulty]||DIFF[3];
-  const qSection=SECTIONS[q.section]||{label:q.section};
-  let answerArea;
-  if(q.type==="spr"){
-    answerArea=`<input class="spr-input" id="sprIn" placeholder="Type your answer" aria-label="Your answer" oninput="PQ_select(this.value,true)" onkeydown="if(event.key==='Enter'&&this.value.trim())checkAnswer()"/>
-      <p class="mathhint" style="margin-top:.45rem">Type fractions as <b>3/4</b> and decimals as <b>0.75</b> — either form is accepted.</p>`;
-  } else {
-    answerArea=`<div class="choices" role="radiogroup" aria-label="Answer choices">`+["A","B","C","D"].map(l=>q.choices&&q.choices[l]!=null?
-      `<button type="button" class="choice" role="radio" aria-checked="false" data-l="${l}" onclick="pickChoice('${l}')"><span class="ltr">${l}</span><span class="ct">${mathText(q.choices[l])}${questionMediaHTML(q.choiceImages?.[l],`Answer choice ${l}`,"choice")}</span></button>`:"").join("")+`</div>`;
-  }
+  const [dl]=DIFF[q.difficulty]||DIFF[3];
   const reportSrc=P.mode==="challenge"?"challenge":String(P.mode).startsWith("task:")?"task":P.mode==="review"?"review":"bank";
-  $c().innerHTML=practiceFrameHTML(`<div class="q-card" style="margin-top:1rem">
-      <div class="q-topline" style="margin-bottom:.8rem">
-        <span class="pill pill-sec">${esc(qSection.label)}</span><span class="pill ${dc}">${dl}</span>
-        <span class="pill pill-muted">${esc(q.category)}</span>${q.subcategory?`<span class="pill pill-muted">${esc(q.subcategory)}</span>`:""}
-        <span style="flex:1"></span>
-        <button type="button" class="bb-mark ${it.flagged?"on":""}" id="pqFlag" onclick="PQ_flag()" aria-pressed="${!!it.flagged}">${typeof ftIcon==="function"?ftIcon("bookmark"):svg("save","ic-sm")} <span>${it.flagged?"Marked for review":"Mark for review"}</span></button>
-        ${q.section==="math"?`<button class="btn btn-ghost btn-sm" id="practiceCalcBtn" onclick="toggleDesmosFloat()">${svg("calc","ic-sm")} Calculator</button>`:""}
-      </div>
-      ${q.passage?`<div class="q-passage">${mathText(q.passage)}</div>`:""}
-      ${questionMediaHTML(q.questionImage,"Question graphic")}
-      <div class="q-prompt">${mathText(q.prompt)}</div>
-      <div id="answerArea">${answerArea}</div>
-      <div id="explainArea"></div>
-      <div class="q-actions">
+  // Keep each pane's scroll when the same question is re-painted (after checking).
+  const same=P.painted===it.id;
+  const prevScroll=same?[...document.querySelectorAll(".pq-work .bb-pane, .pq-work .bb-work")].map(p=>p.scrollTop):[];
+  const tools=`${q.section==="math"?`<button type="button" class="bb-tool qw-tool" id="practiceCalcBtn" onclick="toggleDesmosFloat()">${svg("calc","ic-sm")}<span>Calculator</span></button>`:""}`;
+  const work=qwWorkspaceHTML(q,{
+    num:P.idx+1, section:q.section, mode:"answer", given:it.selected??"", result,
+    flagged:!!it.flagged, onFlag:"PQ_flag()", onPick:"pickChoice", onSpr:"PQ_sprInput", onSprEnter:"checkAnswer()",
+    meta:`${esc(q.category)}${q.subcategory?` · ${esc(q.subcategory)}`:""} · ${dl}`, headExtra:tools,
+  });
+  $c().innerHTML=practiceFrameHTML(`<div class="bb bb-inline pq-work" data-qid="${q.id}">${work}
+      <div class="q-actions pq-actions">
         <span class="feedback-tag" id="fbTag"></span>
         <button class="btn btn-ghost btn-sm" id="saveQBtn" onclick="toggleSavedQuestion(${q.id})">${svg("save","ic-sm")} Save for review</button>${plReportButtonHTML(q.id,reportSrc)}<span class="spacer"></span>
-        <button class="btn btn-primary" id="checkBtn" onclick="checkAnswer()" disabled>Check answer</button>
-      </div>
-    </div>`);
-  if(result) paintPracticeResult(q,result);
-  else if(it.selected!=null&&it.selected!==""){
-    if(q.type==="spr"){ const inp=document.getElementById("sprIn"); inp.value=it.selected; document.getElementById("checkBtn").disabled=!String(it.selected).trim(); }
-    else markChoice(it.selected);
-  }
+        ${typeof CR_costNote==="function"?CR_costNote(result):""}
+        ${result?"":`<button class="btn btn-primary" id="checkBtn" onclick="checkAnswer()" ${String(it.selected??"").trim()?"":"disabled"}>Check answer</button>`}
+      </div></div>`);
+  if(same) document.querySelectorAll(".pq-work .bb-pane, .pq-work .bb-work").forEach((p,i)=>{ p.scrollTop=prevScroll[i]||0; });
+  P.painted=it.id;
+  typesetMath($c());
   if(desmosFloatEl&&DF.ctx!==dfContext()) desmosDestroy();
   if(desmosFloatEl&&DF.open&&q.section!=="math") desmosHide();
   dfAfterRender();
@@ -465,6 +477,7 @@ function renderQuestion(){
   // Warm the next questions so moving on is instant.
   if(P.server) ensureQuestions([itemAt(P.idx+1)?.id,itemAt(P.idx+2)?.id]).catch(()=>{});
 }
+function PQ_sprInput(v){ PQ_select(v,true); }
 // Question frame: the shared progress bar, save status and the navigator bar.
 function practiceFrameHTML(inner){
   const total=P.items.length, done=P.items.filter(i=>i.submitted||i.result||(P.results&&P.results[i.id])).length;
@@ -590,11 +603,11 @@ document.addEventListener("keydown",e=>{
 },true);
 
 function markChoice(l){
-  document.querySelectorAll("#answerArea .choice").forEach(c=>{ const on=c.dataset.l===l; c.classList.toggle("sel",on); c.setAttribute("aria-checked",String(on)); });
+  document.querySelectorAll(".pq-work .bb-opt").forEach(o=>{ const on=o.dataset.l===l; o.classList.toggle("sel",on); const m=o.querySelector(".bb-opt-main"); if(m){ m.setAttribute("aria-checked",String(on)); m.tabIndex=on?0:-1; } });
   const b=document.getElementById("checkBtn"); if(b) b.disabled=!l;
 }
 function pickChoice(l){
-  const it=itemAt(P.idx); if(!it||it.submitted||it.result||(P.results&&P.results[it.id])) return;
+  const it=itemAt(P.idx); if(!it||P.checking||it.submitted||it.result||(P.results&&P.results[it.id])) return;
   markChoice(l); PQ_select(l,false);
 }
 function PQ_select(value,typed){
@@ -679,26 +692,40 @@ async function checkAnswer(){
   const selected=q.type==="spr"?String(document.getElementById("sprIn")?.value||"").trim():it.selected;
   if(!selected) return;
   const btn=document.getElementById("checkBtn"), label=btn.innerHTML;
-  const lock=on=>{ const inp=document.getElementById("sprIn"); if(inp) inp.disabled=on; document.querySelectorAll("#answerArea .choice").forEach(c=>c.disabled=on); };
+  const lock=on=>{ const inp=document.getElementById("sprIn"); if(inp) inp.disabled=on; document.querySelector(".pq-work .bb-opts")?.classList.toggle("qw-locked",on); };
   P.checking=true; btn.disabled=true; btn.textContent="Checking…"; lock(true);
   let res=null, err=null;
   try{
     if(P.server){
       if(PQ.pending) PQ_flush();
       const r=await api(`practice/sessions/${P.sid}/answer`,{method:"POST",body:JSON.stringify({questionId:it.id,selected})});
-      res={selected:r.selected,correct:r.correct,answer:r.answer,acceptableAnswers:r.acceptableAnswers,explanation:r.explanation};
+      res={selected:r.selected,correct:r.correct,answer:r.answer,acceptableAnswers:r.acceptableAnswers,explanation:r.explanation,credit:r.credit};
     } else {
-      const g=await gradeAnswer(q,selected,P.mode);
+      // One id per submission: a retry after a dropped connection is the
+      // same attempt (never a second score or charge).
+      it.attemptKey=it.attemptKey||newClientKey();
+      const g=await gradeAnswer(q,selected,P.mode,it.attemptKey);
       res={selected,...g};
     }
   }catch(e){ err=e; }
   P.checking=false;
+  if(res&&typeof CR_receipt==="function") CR_receipt(res.credit);
   if(state.view!=="practice"||!P||itemAt(P.idx)!==it){ if(res) storeResult(it,res); return; }
   if(!res){
     if(err?.data?.locked){ it.locked=true; renderQuestion(); return; }
+    if(err?.data?.outOfCredits){ if(typeof CR_outOfCredits==="function") CR_outOfCredits(err.data); lock(false); btn.innerHTML=label; btn.disabled=true; return; }
+    if(!err?.status){
+      // Connection dropped: the server may already have accepted it. Show
+      // "Submission pending" and reconcile automatically on reconnect — the
+      // same request returns the stored result and receipt if it landed.
+      btn.innerHTML="Submission pending…"; btn.disabled=true;
+      const tag=document.getElementById("fbTag"); if(tag){ tag.className="feedback-tag pend"; tag.textContent="Submission pending — reconnecting"; }
+      const retry=()=>{ window.removeEventListener("online",retry); clearTimeout(P.pendT); if(P&&itemAt(P.idx)===it&&state.view==="practice") checkAnswer(); };
+      window.addEventListener("online",retry); P.pendT=setTimeout(retry,4000);
+      return;
+    }
     toast(err?.message||"Could not check your answer. Try again.");
     lock(false); btn.innerHTML=label; btn.disabled=false;
-    if(P.server&&!err?.status) setPqState("retry");
     return;
   }
   storeResult(it,res);
@@ -711,25 +738,9 @@ function storeResult(it,res){
   it.submitted=true; it.correct=!!res.correct; it.selected=res.selected; it.result=res;
   if(!P.server){ P.results=P.results||{}; P.results[it.id]=res; }
 }
-function paintPracticeResult(q,result){
-  const {selected,correct}=result;
-  const answer=result.answer??q.answer, explanation=result.explanation??q.explanation;
-  if(q.type==="spr"){
-    const inp=document.getElementById("sprIn"); if(inp){ inp.value=selected; inp.disabled=true; inp.style.borderColor=correct?"var(--mint)":"var(--red)"; }
-  } else {
-    document.querySelectorAll("#answerArea .choice").forEach(c=>{
-      c.disabled=true;
-      if(c.dataset.l===answer) c.classList.add("right");
-      else if(c.dataset.l===selected) c.classList.add("wrong");
-      c.classList.remove("sel");
-    });
-  }
-  const tag=document.getElementById("fbTag");
-  if(tag){ tag.className="feedback-tag "+(correct?"ok":"no"); tag.innerHTML=(correct?svg("check","ic-sm")+"Correct":svg("x","ic-sm")+"Not quite"); }
-  const ex=document.getElementById("explainArea");
-  if(ex) ex.innerHTML=`<div class="explain ${correct?"":"bad"}"><h4>${correct?"Why this works":"Correct answer: "+mathText(answer??"")}</h4><div class="explain-body">${mathText(explanation||"—")}</div></div>`;
-  const cb=document.getElementById("checkBtn"); if(cb) cb.style.display="none";
-}
+// The checked question is re-painted read-only by the shared workspace:
+// submitted answer, correct answer and the full explanation.
+function paintPracticeResult(q,result){ renderQuestion(); }
 function nextQuestion(){ PQ_go(P.idx+1); }
 async function PQ_finish(){
   const open=P.items.filter(i=>!i.locked&&!(i.submitted||i.result||(P.results&&P.results[i.id]))).length;
@@ -759,14 +770,23 @@ function finishPractice(fromStatus){
 }
 
 // Records and grades one answer on the server (tasks, review, rush).
-async function recordAttempt(q,selected,mode){
-  return api("attempts",{method:"POST",body:JSON.stringify({questionId:q.id, selected:String(selected), mode})});
+async function recordAttempt(q,selected,mode,attemptKey){
+  return api("attempts",{method:"POST",body:JSON.stringify({questionId:q.id, selected:String(selected), mode, attemptKey:attemptKey||newClientKey()})});
 }
-async function gradeAnswer(q,selected,mode){
+// Network failures are retried with the same attempt id, so a retry can never
+// score or charge twice.
+async function gradeAnswer(q,selected,mode,attemptKey){
   if(state.user?.role!=="student"&&q.answer!==undefined)
-    return {correct:q.type==="spr"?sprMatches(selected,q.answer):selected===q.answer,answer:q.answer,explanation:q.explanation||""};
-  const row=await recordAttempt(q,selected,mode);
-  return {correct:!!row?.correct,answer:row?.answer??null,explanation:row?.explanation||""};
+    return {correct:q.type==="spr"?sprMatches(selected,q.answer):selected===q.answer,answer:q.answer,acceptableAnswers:q.acceptableAnswers,explanation:q.explanation||""};
+  const key=attemptKey||newClientKey();
+  let row, lastErr;
+  for(let i=0;i<3;i++){
+    try{ row=await recordAttempt(q,selected,mode,key); break; }
+    catch(e){ lastErr=e; if(e.status) throw e; await new Promise(r=>setTimeout(r,800*(i+1))); }
+  }
+  if(!row) throw lastErr;
+  if(typeof CR_receipt==="function") CR_receipt(row.credit);
+  return {correct:!!row?.correct,answer:row?.answer??null,acceptableAnswers:row?.acceptableAnswers,explanation:row?.explanation||"",credit:row.credit};
 }
 // Kept for links that still call the old entry point.
 async function startPractice(section,category,subcategory=null){
@@ -792,10 +812,10 @@ async function viewRush(){
       <div id="rushChips">${chipsHTML(RUSH.f,"RUSH_set")}</div>
       <p style="font-size:.74rem;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin:1rem 0 .6rem;text-align:center">Time</p>
       <div class="opt-row" id="durRow">${[[60,"60s"],[120,"2 min"],[180,"3 min"]].map(([v,l])=>`<button class="opt ${v===dur?'on':''}" data-dur="${v}" onclick="setDur(${v})">${l}</button>`).join("")}</div>
-      <div id="rushAvail" class="rush-avail" role="status" aria-live="polite"></div>
+      <div id="rushAvail" class="rush-avail" role="status" aria-live="polite"></div>${CR_costHTML()}
       <button class="btn btn-primary btn-block" id="rushStart" style="margin-top:1rem;max-width:280px;margin-left:auto;margin-right:auto" onclick="beginRush()">${svg("rush","ic-sm")} Start rush</button>
     </div></div>`;
-  RUSH_count();
+  RUSH_count(); CR_paint();
 }
 function RUSH_set(k,v,on){
   RUSH.f=cleanFilters(toggleFilter(RUSH.f,k,v,on),{area:"rush",status:false});
@@ -824,7 +844,8 @@ function setDur(v){ R.dur=v; document.querySelectorAll("#durRow .opt").forEach(o
 async function beginRush(){
   const dur=R.dur; loading();
   let draw={questions:[],available:0},usage={enrolled:true,remaining:null};
-  try{ [draw,usage]=await Promise.all([api("practice/rush",{method:"POST",body:JSON.stringify({filters:RUSH.f})}),api("usage")]); }catch(e){ toast(e.message); go("rush"); return; }
+  try{ [draw,usage]=await Promise.all([api("practice/rush",{method:"POST",body:JSON.stringify({filters:RUSH.f})}),api("usage")]); }catch(e){ if(e.data?.outOfCredits) CR_outOfCredits(e.data); else toast(e.message); go("rush"); return; }
+  CR_receipt(draw.credit);
   if(!usage.enrolled&&usage.remaining<=0){ toast("Daily practice limit reached. It resets tomorrow."); go("home"); return; }
   let list=draw.questions;
   if(!usage.enrolled&&usage.remaining!=null) list=list.slice(0,usage.remaining);

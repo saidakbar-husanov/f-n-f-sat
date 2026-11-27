@@ -81,40 +81,88 @@ async function FX_setLbVisible(on){
 function saveName(){ FX_saveProfile(); }
 
 // ──────────────── leaderboards ────────────────
-const PL_LB={category:"points",period:"weekly",classId:"",q:"",page:0};
+// Leaderboard view state lives in the URL (?lbk=points&lbp=weekly&lbc=&lbq=&lbpg=),
+// so Back from a profile restores the metric, period, class, search, page and
+// scroll. The highlighted period, its aria-pressed state and the results all
+// come from the same value: the one the server answered for.
+const PL_LB={category:"points",period:"weekly",classId:"",q:"",page:0,seq:0};
+const LB_CATS=["points","accuracy","streak"], LB_PERIODS=["daily","weekly","monthly","all"];
 let lbSearchT=null;
-async function viewLeaderboards(){
+function lbFromState(){
+  if(LB_CATS.includes(state.lbk)) PL_LB.category=state.lbk;
+  if(LB_PERIODS.includes(state.lbp)) PL_LB.period=state.lbp;
+  PL_LB.classId=state.lbc!=null?String(state.lbc):PL_LB.classId;
+  PL_LB.q=state.lbq!=null?String(state.lbq):PL_LB.q;
+  PL_LB.page=Number(state.lbpg)||0;
+}
+function lbToState(){
+  Object.assign(state,{lbk:PL_LB.category,lbp:PL_LB.period,lbc:PL_LB.classId||null,lbq:PL_LB.q||null,lbpg:PL_LB.page||null});
+  if(state.view==="leaderboards") replaceRoute();
+}
+function PL_lbSet(key,val){
+  PL_LB[key]=val; if(key!=="page") PL_LB.page=0;
+  lbToState();
+  // Paint the choice at once (pressed state follows the click) and load it.
+  lbPaintFilters(PL_LB);
+  viewLeaderboards(true);
+}
+function lbSegHTML(key,opts,cur,label){
+  return `<div class="vb-seg" role="group" aria-label="${label}">${opts.map(([k,l])=>`<button type="button" data-k="${k}" class="${cur===k?"on":""}" aria-pressed="${cur===k}" onclick="PL_lbSet('${key}','${k}')">${l}</button>`).join("")}</div>`;
+}
+function lbPaintFilters(v){
+  const el=document.getElementById("lbSegs"); if(!el) return;
+  el.innerHTML=lbSegHTML("category",[["points","Points"],["accuracy","Accuracy"],["streak","Streak"]],v.category,"Leaderboard metric")
+    +(v.category==="streak"?"":lbSegHTML("period",[["daily","Today"],["weekly","This week"],["monthly","This month"],["all","All time"]],v.period,"Leaderboard period"));
+}
+async function viewLeaderboards(fromControl){
   crumbs([{label:"Leaderboards"}]);
+  if(!fromControl) lbFromState();
+  lbToState();
   const first=!document.getElementById("lbBody"); if(first) loading();
-  const qs=`category=${PL_LB.category}&period=${PL_LB.period}${PL_LB.classId?`&classId=${PL_LB.classId}`:""}${PL_LB.q?`&q=${encodeURIComponent(PL_LB.q)}`:""}`;
-  let d; try{ d=await api(`leaderboards?${qs}&page=${PL_LB.page}`); }catch(e){ $c().innerHTML=`<div class="empty"><p>${esc(e.message)}</p></div>`; return; }
-  if(state.view!=="leaderboards") return;
-  const seg=(key,opts)=>`<div class="vb-seg">${opts.map(([k,l])=>`<button class="${PL_LB[key]===k?"on":""}" onclick="PL_LB.${key}='${k}';PL_LB.page=0;viewLeaderboards()">${l}</button>`).join("")}</div>`;
+  const want={...PL_LB}; const seq=++PL_LB.seq;
+  const qs=`category=${want.category}&period=${want.period}${want.classId?`&classId=${want.classId}`:""}${want.q?`&q=${encodeURIComponent(want.q)}`:""}`;
+  if(!first){ const b=document.getElementById("lbBody"); if(b) b.setAttribute("aria-busy","true"); }
+  let d; try{ d=await api(`leaderboards?${qs}&page=${want.page}`); }catch(e){ if(seq===PL_LB.seq&&state.view==="leaderboards") (document.getElementById("lbBody")||$c()).innerHTML=`<div class="empty"><p>${esc(e.message)}</p><button class="btn btn-ghost btn-sm" onclick="viewLeaderboards(true)">Retry</button></div>`; return; }
+  // A faster answer for an earlier click never overwrites the latest choice.
+  if(seq!==PL_LB.seq||state.view!=="leaderboards") return;
+  const shown={category:d.category,period:d.period};
   const unit=d.category==="points"?"points":d.category==="accuracy"?"%":"days";
   const me=state.user.profile?.id;
-  const rows=d.rows.map(r=>`<tr class="${r.studentId===me?"pl-me":""} ${r.hidden?"lb-hidden":""}"><td class="ft-num">${r.rank<=3?`<span class="pl-medal m${r.rank}">${r.rank}</span>`:r.rank}</td><td><b>@${esc(r.username)}</b>${r.studentId===me?` <span class="pill pill-sec">You</span>`:""}${r.hidden?` <span class="pill pill-muted" title="Hidden from everyone except the super admin">Hidden</span>`:""}</td>
+  const nameCell=r=>d.superAdmin&&state.user.role==="admin"
+    ? `<button type="button" class="linkish lb-user" onclick="LB_openProfile(${Number(r.studentId)})" title="Open admin profile">@${esc(r.username)}</button>`
+    : `<b>@${esc(r.username)}</b>`;
+  const rows=d.rows.map(r=>`<tr class="${r.studentId===me?"pl-me":""} ${r.hidden?"lb-hidden":""}"><td class="ft-num">${r.rank<=3?`<span class="pl-medal m${r.rank}">${r.rank}</span>`:r.rank}</td><td>${nameCell(r)}${r.studentId===me?` <span class="pill pill-sec">You</span>`:""}${r.hidden?` <span class="pill pill-muted" title="Hidden from everyone except the super admin">Hidden</span>`:""}</td>
     <td class="ft-n"><b>${r.value}</b> ${unit}${d.category==="accuracy"?`<div class="umeta">${r.extra.correct}/${r.extra.answered}</div>`:d.category==="streak"?`<div class="umeta">best ${r.extra.longest}</div>`:`<div class="umeta">${r.extra.questionPoints} q · ${r.extra.qualifyingDays} days · ${r.extra.mocks} mocks</div>`}</td>
     <td>${(r.badges||[]).slice(0,6).map(k=>`<span class="pl-badge-mini" title="${esc(k.replace(/_/g," "))}">${svg("trophy","ic-sm")}</span>`).join("")}${r.badges?.length>6?`<span class="umeta">+${r.badges.length-6}</span>`:""}</td></tr>`).join("");
   const help={points:"Easy correct 1 · Medium 2 · Hard 3 (first answer to each question in the period) · 5 per qualifying day · 20 per completed full-length mock.",
     accuracy:`First answer to each question in the period; at least ${d.minAccuracyQuestions} questions to appear. Ties: more correct answers, then more questions.`,
     streak:"Consecutive qualifying days (10 practice questions or one finished mock-test module). Ranked by the current streak."}[d.category];
+  const periodLabel={daily:"Today",weekly:"This week",monthly:"This month",all:"All time"}[d.period];
   const pages=Math.max(1,Math.ceil(d.total/d.pageSize));
-  const body=`${d.superAdmin?`<p class="lb-super">${svg("lock","ic-sm")} Super admin view: the complete leaderboard, including ${d.hiddenCount} hidden entr${d.hiddenCount===1?"y":"ies"} (marked <b>Hidden</b>). Everyone else sees visible entries only.</p>`:""}
+  const body=`<p class="sr-only" role="status">${esc(d.category==="streak"?"Streak":periodLabel)} leaderboard loaded</p>${d.superAdmin?`<p class="lb-super">${svg("lock","ic-sm")} Super admin view: the complete leaderboard, including ${d.hiddenCount} hidden entr${d.hiddenCount===1?"y":"ies"} (marked <b>Hidden</b>). Select a username to open that person's admin profile. Everyone else sees visible entries only.</p>`:""}
     ${state.user.role==="student"&&d.myVisibility===false?`<p class="st-note">${svg("info","ic-sm")} You're hidden from the leaderboard. <button class="linkish" onclick="go('settings')">Change in Settings</button></p>`:""}
     ${d.me?`<p><b>Your rank: ${d.me.rank}</b> · ${d.me.value} ${unit}</p>`:""}
-    ${rows?`<div class="ft-table-wrap lb-wrap"><table class="ft-table"><thead><tr><th>#</th><th>Username</th><th class="ft-n">Score</th><th>Badges</th></tr></thead><tbody>${rows}</tbody></table></div>
-      ${pages>1?`<div class="qb-pager"><button class="btn btn-ghost btn-sm" ${d.page<=0?"disabled":""} onclick="PL_LB.page--;viewLeaderboards()">Previous</button><span class="umeta">Page ${d.page+1} of ${pages} · ${d.total} entries</span><button class="btn btn-ghost btn-sm" ${d.page+1>=pages?"disabled":""} onclick="PL_LB.page++;viewLeaderboards()">Next</button></div>`:`<p class="umeta">${d.total} entr${d.total===1?"y":"ies"}</p>`}`
-      :`<div class="empty" style="padding:1.5rem"><p>${PL_LB.q?`No usernames match “${esc(PL_LB.q)}”.`:"No ranked students yet for this view."}</p></div>`}`;
-  if(!first&&document.getElementById("lbBody")){ document.getElementById("lbBody").innerHTML=body; return; }
+    ${rows?`<div class="ft-table-wrap lb-wrap"><table class="ft-table"><caption class="sr-only">${esc(d.category)} · ${esc(d.category==="streak"?"current streak":periodLabel)}</caption><thead><tr><th>#</th><th>Username</th><th class="ft-n">Score</th><th>Badges</th></tr></thead><tbody>${rows}</tbody></table></div>
+      ${pages>1?`<div class="qb-pager"><button class="btn btn-ghost btn-sm" ${d.page<=0?"disabled":""} onclick="PL_lbSet('page',${d.page-1})">Previous</button><span class="umeta">Page ${d.page+1} of ${pages} · ${d.total} entries</span><button class="btn btn-ghost btn-sm" ${d.page+1>=pages?"disabled":""} onclick="PL_lbSet('page',${d.page+1})">Next</button></div>`:`<p class="umeta">${d.total} entr${d.total===1?"y":"ies"}</p>`}`
+      :`<div class="empty" style="padding:1.5rem"><p>${want.q?`No usernames match “${esc(want.q)}”.`:"No ranked students yet for this view."}</p></div>`}`;
+  if(!first&&document.getElementById("lbBody")){
+    const b=document.getElementById("lbBody"); b.innerHTML=body; b.removeAttribute("aria-busy");
+    lbPaintFilters({...PL_LB,...shown});
+    const h=document.getElementById("lbHelp"); if(h) h.textContent=`${help} Days follow the ${d.timezone} calendar.`;
+    return;
+  }
   $c().innerHTML=`<div class="page-head fade"><h1>Leaderboards</h1><p>Calculated on the server from verified answers. Entries show usernames only — never names or emails.</p></div>
-    <div class="panel fade"><div class="pl-lb-filters">${seg("category",[["points","Points"],["accuracy","Accuracy"],["streak","Streak"]])}
-      ${d.category==="streak"?"":seg("period",[["daily","Today"],["weekly","This week"],["monthly","This month"],["all","All time"]])}
-      <select aria-label="Class" onchange="PL_LB.classId=this.value;PL_LB.page=0;viewLeaderboards()"><option value="">Platform-wide</option>${d.classes.map(c=>`<option value="${c.id}" ${String(PL_LB.classId)===String(c.id)?"selected":""}>${esc(c.name)}</option>`).join("")}</select>
-      <input type="search" class="lb-search" placeholder="Search usernames" aria-label="Search usernames" value="${esc(PL_LB.q)}" oninput="clearTimeout(lbSearchT);const v=this.value;lbSearchT=setTimeout(()=>{PL_LB.q=v.trim();PL_LB.page=0;viewLeaderboards();},300)"/>
+    <div class="panel fade"><div class="pl-lb-filters"><span id="lbSegs" class="lb-segs"></span>
+      <select aria-label="Class" onchange="PL_lbSet('classId',this.value)"><option value="">Platform-wide</option>${d.classes.map(c=>`<option value="${c.id}" ${String(PL_LB.classId)===String(c.id)?"selected":""}>${esc(c.name)}</option>`).join("")}</select>
+      <input type="search" class="lb-search" placeholder="Search usernames" aria-label="Search usernames" value="${esc(PL_LB.q)}" oninput="clearTimeout(lbSearchT);const v=this.value;lbSearchT=setTimeout(()=>PL_lbSet('q',v.trim()),300)"/>
       <button class="btn btn-ghost btn-sm" onclick="FX_lbExport()">${svg("upload","ic-sm")} Export CSV</button></div>
-      <p class="umeta" style="margin:.6rem 0">${esc(help)} Days follow the ${esc(d.timezone)} calendar.</p>
+      <p class="umeta" style="margin:.6rem 0" id="lbHelp">${esc(help)} Days follow the ${esc(d.timezone)} calendar.</p>
       <div id="lbBody">${body}</div></div>`;
+  lbPaintFilters({...PL_LB,...shown});
 }
+// Super admin: a username opens that person's existing admin profile, by
+// stable user id. The leaderboard's own URL keeps the view for Back.
+function LB_openProfile(id){ if(!Number.isInteger(id)||id<=0) return; go("users",{userId:id}); }
 async function FX_lbExport(){
   const qs=`category=${PL_LB.category}&period=${PL_LB.period}${PL_LB.classId?`&classId=${PL_LB.classId}`:""}${PL_LB.q?`&q=${encodeURIComponent(PL_LB.q)}`:""}&format=csv`;
   try{
@@ -172,6 +220,7 @@ function FX_axFilter(q){ q=q.trim().toLowerCase(); document.querySelectorAll("#a
 function FX_pickStudent(id){
   id=Number(id)||null;
   state.accessStudent=id; replaceRoute();
+  if(typeof CRA_render==="function") CRA_render();
   const s=document.getElementById("axStudent"); if(s) s.value=id||"";
   const ed=document.getElementById("axEditor"); if(!ed) return;
   if(!id){ ed.innerHTML=`<p class="umeta">Choose a student to see and change their access.</p>`; return; }
@@ -316,76 +365,7 @@ async function viewAnnouncement(id){
   plRefreshInbox();
 }
 
-// ──────────────── Reading Library ────────────────
-const LIB={q:"",topic:"",editing:null};
-async function viewLibrary(){
-  if(state.articleId) return viewArticle(Number(state.articleId));
-  crumbs([{label:"Reading Library"}]);
-  if(state.user.role==="student"){ await loadAccess(); if(ACC.data&&!ACC.data.library){ $c().innerHTML=lockedHTML("The Reading Library"); return; } }
-  if(!document.getElementById("libList")) loading();
-  let d; try{ d=await api(`library?q=${encodeURIComponent(LIB.q)}&topic=${encodeURIComponent(LIB.topic)}`); }catch(e){ $c().innerHTML=e.data?.locked?lockedHTML("The Reading Library"):`<div class="empty"><p>${esc(e.message)}</p></div>`; return; }
-  if(state.view!=="library"||state.articleId) return;
-  const cards=d.articles.map(a=>`<li><button type="button" class="lib-card" onclick="go('library',{articleId:${a.id}})">
-    <span class="lib-topic">${esc(a.topic||"Reading")}</span><span class="lib-title">${esc(a.title)}</span><span class="lib-prev">${esc(a.excerpt)}</span>
-    <span class="umeta">${a.readingMinutes} min read${a.hasQuestion?" · comprehension question":""}${d.canEdit||state.user.role==="mentor"?` · ${a.status==="published"?"Published":"Draft"}`:""}</span></button></li>`).join("");
-  const list=`<ul class="lib-grid" id="libList">${cards}</ul>${d.articles.length?"":`<div class="empty"><p>${LIB.q||LIB.topic?"Nothing matches your search.":"No pieces yet."}</p></div>`}`;
-  if(document.getElementById("libList")&&document.getElementById("libWrap")){ document.getElementById("libWrap").innerHTML=list; return; }
-  $c().innerHTML=`<div class="page-head fade"><h1>Reading Library</h1><p>Short original articles and excerpts to build reading stamina. Each piece shows its topic and an estimated reading time.</p>
-      ${d.canEdit?`<button class="btn btn-primary" onclick="FX_libEdit(null)">${svg("edit","ic-sm")} New piece</button>`:""}</div>
-    <div class="panel fade lib-tools"><input type="search" placeholder="Search titles, topics and text" aria-label="Search the library" value="${esc(LIB.q)}" oninput="clearTimeout(window.__libT);const v=this.value;window.__libT=setTimeout(()=>{LIB.q=v.trim();viewLibrary();},300)"/>
-      <select aria-label="Topic" onchange="LIB.topic=this.value;viewLibrary()"><option value="">All topics</option>${d.topics.map(t=>`<option ${LIB.topic===t?"selected":""}>${esc(t)}</option>`).join("")}</select></div>
-    <div id="libWrap" class="fade">${list}</div><div id="libEditor"></div>`;
-}
-async function viewArticle(id){
-  crumbs([{label:"Reading Library",onclick:"go('library',{articleId:null})"},{label:"Article"}]); loading();
-  let a; try{ a=await api(`library/${id}`); }catch(e){ $c().innerHTML=e.data?.locked?lockedHTML("The Reading Library"):`<div class="empty fade"><h3>Article not available</h3><p>${esc(e.message)}</p><button class="btn btn-ghost" onclick="go('library',{articleId:null})">Library</button></div>`; return; }
-  if(state.view!=="library") return;
-  crumbs([{label:"Reading Library",onclick:"go('library',{articleId:null})"},{label:a.title}]);
-  const q=a.question;
-  $c().innerHTML=`<article class="reader fade"><p class="lib-topic">${esc(a.topic||"Reading")} · ${a.readingMinutes} min read</p><h1>${esc(a.title)}</h1>
-    ${a.canEdit?`<div class="reader-admin"><span class="pill ${a.status==="published"?"pill-sec":"pill-muted"}">${a.status==="published"?"Published":"Draft"}</span>
-      <button class="btn btn-ghost btn-xs" onclick="FX_libEdit(${a.id})">${svg("edit","ic-sm")} Edit</button>
-      <button class="btn btn-ghost btn-xs" onclick="FX_libStatus(${a.id},'${a.status==="published"?"draft":"published"}')">${a.status==="published"?"Unpublish":"Publish"}</button></div>`:""}
-    <div class="reader-body" id="readerBody">${a.body.split(/\n{2,}/).map(p=>`<p>${esc(p).replace(/\n/g,"<br>")}</p>`).join("")}</div>
-    ${q?`<section class="reader-q" aria-labelledby="rqH"><h2 id="rqH">Check your understanding</h2><p class="q-prompt">${esc(q.prompt)}</p>
-      <div class="choices" id="rqChoices" role="radiogroup">${Object.entries(q.choices).map(([k,v])=>`<button type="button" class="choice" role="radio" aria-checked="false" data-l="${k}" onclick="FX_libAnswer(${a.id},'${k}')"><span class="ltr">${k}</span><span class="ct">${esc(v)}</span></button>`).join("")}</div>
-      <div id="rqResult" aria-live="polite"></div></section>`:""}
-    <div id="libEditor"></div>
-    <button class="btn btn-ghost" style="margin-top:1.2rem" onclick="go('library',{articleId:null})">${svg("back","ic-sm")} Library</button></article>`;
-}
-async function FX_libAnswer(id,letter){
-  document.querySelectorAll("#rqChoices .choice").forEach(c=>c.disabled=true);
-  let r; try{ r=await api(`library/${id}/answer`,{method:"POST",body:JSON.stringify({selected:letter})}); }catch(e){ toast(e.message); document.querySelectorAll("#rqChoices .choice").forEach(c=>c.disabled=false); return; }
-  document.querySelectorAll("#rqChoices .choice").forEach(c=>{ if(c.dataset.l===r.answer) c.classList.add("right"); else if(c.dataset.l===letter) c.classList.add("wrong"); c.setAttribute("aria-checked",String(c.dataset.l===letter)); });
-  document.getElementById("rqResult").innerHTML=`<div class="explain ${r.correct?"":"bad"}"><h4>${r.correct?"Correct":"Correct answer: "+esc(r.answer)}</h4><p>${esc(r.explanation)}</p>${r.support?`<p class="umeta">Supporting sentence:</p><blockquote class="reader-support">${esc(r.support)}</blockquote>`:""}</div>`;
-  // Point at the supporting sentence in the text.
-  if(r.support){ const body=document.getElementById("readerBody"); const ps=[...body.querySelectorAll("p")]; const hit=ps.find(p=>p.textContent.includes(r.support.slice(0,40))); if(hit){ hit.classList.add("reader-hit"); } }
-}
-async function FX_libStatus(id,status){ try{ await api(`library/${id}/status`,{method:"POST",body:JSON.stringify({status})}); toast(status==="published"?"Published":"Unpublished"); viewArticle(id); }catch(e){ toast(e.message); } }
-async function FX_libEdit(id){
-  let a={title:"",topic:"",excerpt:"",body:"",status:"draft",question:null};
-  if(id){ try{ a=await api(`library/${id}`); }catch(e){ toast(e.message); return; } }
-  const q=a.question||{prompt:"",choices:{},answer:"",explanation:"",support:""};
-  ftModal(id?"Edit piece":"New piece",`<div class="field"><label>Title</label><input id="leTitle" value="${esc(a.title)}"/></div>
-    <div class="f-row"><div class="field"><label>Topic</label><input id="leTopic" value="${esc(a.topic)}" placeholder="e.g. Science"/></div><div class="field"><label>Status</label><select id="leStatus"><option value="draft" ${a.status!=="published"?"selected":""}>Draft</option><option value="published" ${a.status==="published"?"selected":""}>Published</option></select></div></div>
-    <div class="field"><label>Preview (optional — first lines are used otherwise)</label><input id="leExcerpt" value="${esc(a.excerpt||"")}"/></div>
-    <div class="field"><label>Text (blank line between paragraphs)</label><textarea id="leBody" rows="10">${esc(a.body)}</textarea></div>
-    <details ${a.question?"open":""}><summary><b>Comprehension question (optional)</b></summary>
-      <div class="field"><label>Question</label><input id="leQ" value="${esc(q.prompt)}"/></div>
-      ${["A","B","C","D"].map(k=>`<div class="field"><label>Choice ${k}</label><input id="leC${k}" value="${esc(q.choices?.[k]||"")}"/></div>`).join("")}
-      <div class="f-row"><div class="field"><label>Correct letter</label><input id="leAns" maxlength="1" value="${esc(q.answer||"")}"/></div></div>
-      <div class="field"><label>Explanation</label><textarea id="leExp" rows="3">${esc(q.explanation||"")}</textarea></div>
-      <div class="field"><label>Supporting sentence or passage (quoted from the text)</label><textarea id="leSup" rows="2">${esc(q.support||"")}</textarea></div></details>`,
-    {wide:true,foot:`${id?`<button class="btn btn-danger" onclick="FX_libDelete(${id})">Delete</button>`:""}<button class="btn btn-primary" onclick="FX_libSave(${id||"null"})">${svg("save","ic-sm")} Save</button>`});
-}
-async function FX_libSave(id){
-  const v=k=>document.getElementById(k).value;
-  const prompt=v("leQ").trim();
-  const body={title:v("leTitle"),topic:v("leTopic"),excerpt:v("leExcerpt"),body:v("leBody"),status:v("leStatus"),
-    question:prompt?{prompt,choices:Object.fromEntries(["A","B","C","D"].map(k=>[k,v("leC"+k)]).filter(([,x])=>x.trim())),answer:v("leAns").trim().toUpperCase(),explanation:v("leExp"),support:v("leSup")}:null};
-  try{ const r=await api(id?`library/${id}`:"library",{method:id?"PUT":"POST",body:JSON.stringify(body)}); ftCloseModal(); toast("Saved"); go("library",{articleId:r.id}); }catch(e){ toast(e.message); }
-}
-async function FX_libDelete(id){ if(!confirm("Delete this piece permanently?")) return; try{ await api(`library/${id}`,{method:"DELETE"}); ftCloseModal(); go("library",{articleId:null}); }catch(e){ toast(e.message); } }
+// Reading Library: moved to library.js.
 
 // ──────────────── two-pane admin editors: keep the left list on screen ────────────────
 // The list panel is sticky under the top bar; its height is the space actually
