@@ -2,8 +2,27 @@
    (Question Bank, Challenging Questions, tasks, review queues, Question Rush,
    previews and reviews), plus credits and leaderboard links. */
 .pq-work{margin-top:1rem;font-family:var(--sans)}
-.pq-work .bb-work.split{min-height:min(62vh,640px)}
-.pq-work .bb-work.split .bb-pane{max-height:calc(100vh - 230px);max-height:calc(100dvh - 230px)}
+/* Practice and Rush use the whole content column, like the Full Mock runner. */
+.q-shell.pq{max-width:none}
+body.qw-wide .content{max-width:none}
+/* Every inline (non-runner) split workspace: a fixed-height two-pane grid in
+   which each pane scrolls on its own to its very last line — passage on the
+   left, prompt, every answer choice and the full explanation on the right.
+   --qw-h sets the height per surface. */
+.bb.bb-inline .bb-work.split{grid-template-rows:minmax(0,1fr);height:var(--qw-h,min(72vh,760px));min-height:340px;max-height:none}
+.bb.bb-inline .bb-work.split>.bb-pane{min-height:0;max-height:none;overflow:auto;overscroll-behavior:contain;padding-bottom:3rem}
+.pq-work{--qw-h:max(380px,calc(100dvh - 290px))}
+.rush-work{--qw-h:max(340px,calc(100dvh - 380px))}
+/* Previews inside a dialog keep the split and its independent scrolling; the
+   dialog's header and footer stay outside the panes. */
+.ft-modal-body .bb.bb-inline .bb-work.split{--qw-h:max(320px,calc(100dvh - 17rem));min-height:320px}
+.ft-modal-body .bb.bb-inline .bb-work.split .bb-pane{max-height:none;overflow:auto}
+/* Docked Desmos beside a practice question: the content column already moves
+   right, so the workspace itself takes no extra offset. */
+body.df-dock-practice .pq-work .bb-work{margin-left:0}
+body.df-dock-practice .bb.bb-inline .bb-work.split{display:block;overflow:auto}
+body.df-dock-practice .bb.bb-inline .bb-work.split>.bb-pane{overflow:visible}
+body.df-dock-practice .bb.bb-inline .bb-work.single{max-height:var(--qw-h);overflow:auto}
 .pq-work .bb-work.single{max-height:none;overflow:visible}
 .pq-work .bb-center{margin:0 auto}
 .pq-actions{padding:.7rem 1rem;border-top:2px dashed var(--bb-line);background:var(--panel2);margin:0;flex-wrap:wrap}
@@ -31,8 +50,10 @@
 .rush-work .bb-work.split .bb-pane{max-height:calc(100vh - 320px)}
 /* Phones: one readable stacked flow, no nested scroll boxes. */
 @media(max-width:760px){
+  .bb.bb-inline .bb-work.split,.ft-modal-body .bb.bb-inline .bb-work.split{height:auto;min-height:0;max-height:none;display:flex;flex-direction:column}
+  .bb.bb-inline .bb-work.split>.bb-pane,.ft-modal-body .bb.bb-inline .bb-work.split .bb-pane{overflow:visible;padding-bottom:1.2rem}
+  .bb.bb-inline .bb-work.split .bb-divider{display:none}
   .pq-work .bb-work.split{min-height:0}
-  .pq-work .bb-work.split .bb-pane,.rush-work .bb-work.split .bb-pane{max-height:none}
   .pq-work .bb-left{border-bottom:2px dashed var(--bb-line)}
 }
 /* Credits */

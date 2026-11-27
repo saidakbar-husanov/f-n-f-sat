@@ -896,11 +896,11 @@ async function api(path, opts={}) {
   // has moved on by the time the answer arrives, it is dropped (never
   // resolves) so it can't paint the old page, rewrite the URL or reopen a
   // session. Writes always complete; background reads pass {bg:true}.
-  const guard=!opts.bg&&(!opts.method||opts.method==="GET")&&typeof NAV==="object";
-  const seq=guard?NAV.seq:0;
+  const guard=!opts.bg&&(!opts.method||opts.method==="GET")&&typeof NAV_GEN==="object";
+  const seq=guard?NAV_GEN.seq:0;
   const {bg,...fetchOpts}=opts;
   const r = await fetch("/api/"+path, { ...fetchOpts, headers });
-  if(guard&&seq!==NAV.seq) return new Promise(()=>{});
+  if(guard&&seq!==NAV_GEN.seq) return new Promise(()=>{});
   if (!r.ok) {
     let m="Request failed",data=null; try{data=await r.json(); m=data.error||m}catch{}
     // An admin reset the password: hold everything until a new one is chosen.
@@ -2568,6 +2568,8 @@ function routeView(){
   // the previous page is cleared at once instead of lingering until the new
   // one has loaded.
   if(typeof navBump==="function") navBump();
+  // Practice and Rush use the whole content width (Full Mock layout).
+  document.body.classList.toggle("qw-wide",state.view==="practice"||state.view==="rush");
   const c=$c(); if(c) c.innerHTML=`<div class="spin" role="status" aria-label="Loading"></div>`;
   m[state.view]();
   // Credit UI follows the server's current answer (stays hidden while off).
@@ -4525,6 +4527,7 @@ function dfWrite(){
 function dfContext(){
   if(state.view==="testsit"&&T?.id) return `test:${T.id}`;
   if(state.view==="practice"&&(P?.calcSid||P?.sid)) return `practice:${P.calcSid||P.sid}`;
+  if(state.view==="rush") return "practice:rush";
   return "practice";
 }
 function toggleDesmosFloat(){
@@ -4645,7 +4648,14 @@ function dfClamp(x,y){
 function dfHost(){
   try{
     if(state.view==="testsit"&&!!T?.test&&DF.ctx===`test:${T.id}`&&currentTestModule()?.section==="math") return "test";
-    if(state.view==="practice"&&P?.sid&&DF.ctx===`practice:${P.sid}`&&P.list?.[P.idx]?.section==="math") return "practice";
+    // Question Bank / Challenging Questions / tasks / review queues: the
+    // context id is the session's calculator id (dfContext), and the current
+    // question's section comes from the session items or the question cache.
+    if(state.view==="practice"&&P&&DF.ctx===dfContext()){
+      const it=P.items?.[P.idx], q=it&&(P.cache?.get?.(it.id)||P.list?.[P.idx]);
+      if((q?.section||it?.section)==="math") return "practice";
+    }
+    if(state.view==="rush"&&typeof R==="object"&&R&&DF.ctx===dfContext()&&R.list?.[R.idx]?.section==="math") return "practice";
   }catch{}
   return null;
 }

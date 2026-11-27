@@ -4,8 +4,15 @@ Import one article or a batch of articles into the Reading Library, with
 paragraphs, images and charts in reading order and an optional comprehension
 question.
 
-- Sample file: [`library-sample.json`](library-sample.json). It uses the two images in [`media/`](media/): `tidepool-heron.svg` and `tide-heights.svg`.
-- Where to import: `/admin/library` → **Import JSON**. Choose the JSON file, plus any image files it names, then click **Preview**. Nothing is saved until you click **Import**.
+- Sample package: [`library-sample.zip`](library-sample.zip) — `library-sample.json` plus its images (`media/tidepool-heron.png`, a photo-style illustration, and `media/tide-heights.svg`, a chart image). Import it as it is to try the whole workflow.
+- Sample JSON only: [`library-sample.json`](library-sample.json) (the images are in [`media/`](media/)).
+- Where to import: `/admin/library` → **Import material**. Choose either
+  - a **ZIP** that contains the article JSON and the image files it names (any folder inside the ZIP; files are matched by file name), or
+  - a plain **JSON** file whose images are already stored on the platform (`/api/question-media/…`), are https links, or were imported before under the same file name. You can also add the image files under **Extra image files**.
+  Then click **Preview**: each article is rendered as students will see it, any image that is missing is listed by file name, and nothing is saved until you click **Import**.
+- New articles are imported as **drafts** (unless the file says `"status": "published"`). Re-importing the same `id` updates that draft, skips it when nothing changed, and never overwrites a published piece unless you tick it — so a re-import never creates a duplicate.
+- Images are uploaded to the platform's persistent media store, so they keep loading after a refresh and in the published student view.
+- The manual editor (**New piece** / **Edit piece**) has **Insert image**, which adds an image block and opens the file picker.
 - **Download sample JSON** downloads the sample file. **Generate compatible JSON** shows a prompt you can paste into ChatGPT to get a file in this format.
 
 ## File shape

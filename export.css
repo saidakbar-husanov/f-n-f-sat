@@ -24,3 +24,4 @@
 .exp-foot .btn[disabled]{opacity:.5;cursor:not-allowed}
 .exp-frame{position:fixed;right:0;bottom:0;width:0;height:0;border:0}
 @media (max-width:520px){.exp-opts{grid-template-columns:1fr}}
+.exp-btn .exp-fmt{font-size:.72em;font-weight:600;opacity:.7;letter-spacing:.02em}

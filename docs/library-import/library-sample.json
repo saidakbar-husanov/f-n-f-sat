@@ -11,7 +11,7 @@
       "blocks": [
         { "type": "paragraph", "text": "Twice each day, the ocean pulls back from rocky coastlines and exposes a narrow band of stone that, only hours earlier, lay under a meter or more of water. Biologists call this band the intertidal zone, and the shallow basins of seawater left behind in its hollows are known as tide pools." },
         { "type": "paragraph", "text": "Life in a tide pool is a study in extremes. When the tide is out, a pool can warm by several degrees in the afternoon sun, and its salt concentration rises as water evaporates. When the tide returns, waves crash over the same pool, cooling it abruptly and threatening to tear loose anything not firmly attached." },
-        { "type": "image", "media": "tidepool-heron.svg", "alt": "A heron stands at the edge of a rocky tide pool that contains sea stars and anemones.", "caption": "Wading birds hunt in tide pools at low tide, when prey has nowhere to hide.", "source": "Illustration: F&F SAT sample media" },
+        { "type": "image", "media": "tidepool-heron.png", "alt": "A heron stands at the edge of a rocky tide pool that contains sea stars and anemones.", "caption": "Wading birds hunt in tide pools at low tide, when prey has nowhere to hide.", "source": "Illustration: F&F SAT sample media" },
         { "type": "paragraph", "text": "Researchers who track pool temperatures over a full day find that the shallowest pools change the most. Deeper pools hold more water, and because water absorbs heat slowly, their temperatures stay comparatively steady even under strong sunlight." },
         {
           "type": "chart",

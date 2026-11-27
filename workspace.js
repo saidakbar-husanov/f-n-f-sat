@@ -175,7 +175,7 @@ if(typeof ftCloseModal==="function"){
 // generation. A response that belongs to an older generation is dropped
 // instead of painting the previous page over the new one, rewriting the URL
 // or re-opening a practice session. Background requests opt out ({bg:true}).
-const NAV={seq:0};
-function navBump(){ NAV.seq++; return NAV.seq; }
-const navCurrent=()=>NAV.seq;
-const navStale=seq=>seq!==NAV.seq;
+const NAV_GEN={seq:0};
+function navBump(){ NAV_GEN.seq++; return NAV_GEN.seq; }
+const navCurrent=()=>NAV_GEN.seq;
+const navStale=seq=>seq!==NAV_GEN.seq;
