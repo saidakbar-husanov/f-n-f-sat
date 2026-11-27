@@ -1,0 +1,26 @@
+/* export.css — the Download dialog (export.js). */
+.exp-btn{white-space:nowrap}
+.exp-modal .ft-modal{width:min(500px,100%)}
+.exp-group{margin-bottom:1rem}
+.exp-label{font-size:.74rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);margin-bottom:.4rem}
+.exp-opts{display:grid;grid-template-columns:1fr 1fr;gap:.5rem}
+.exp-opt{display:flex;gap:.55rem;align-items:flex-start;padding:.65rem .75rem;border:1.5px solid var(--border2);border-radius:var(--r);cursor:pointer;transition:border-color .15s,background .15s}
+.exp-opt:hover{border-color:var(--accent)}
+.exp-opt.on{border-color:var(--accent);background:var(--accent-soft)}
+.exp-opt.off{opacity:.5;cursor:not-allowed}
+.exp-opt input{margin-top:.2rem;accent-color:var(--accent)}
+.exp-opt b{display:block;font-size:.9rem;color:var(--ink)}
+.exp-opt small{display:block;font-size:.76rem;color:var(--ink3);line-height:1.35;margin-top:.1rem}
+.exp-check{display:flex;gap:.5rem;align-items:center;font-size:.88rem;color:var(--ink2);margin:.2rem 0 1rem;cursor:pointer}
+.exp-check input{accent-color:var(--accent)}
+.exp-summary{padding:.75rem .85rem;border-radius:var(--r);background:var(--panel2);border:1px solid var(--border);display:flex;flex-direction:column;gap:.2rem}
+.exp-summary .umeta{color:var(--ink3);font-size:.8rem}
+.exp-summary.err{color:var(--red);flex-direction:row}
+.exp-scope{font-weight:600;color:var(--ink);font-size:.9rem}
+.exp-count{font-size:.88rem;color:var(--ink2)}
+.exp-count b{font-size:1.1rem;color:var(--ink)}
+.exp-spin{width:16px;height:16px;border-width:2px;margin:0 .5rem 0 0;display:inline-block;vertical-align:middle}
+.exp-foot{display:flex;gap:.6rem;justify-content:flex-end;width:100%}
+.exp-foot .btn[disabled]{opacity:.5;cursor:not-allowed}
+.exp-frame{position:fixed;right:0;bottom:0;width:0;height:0;border:0}
+@media (max-width:520px){.exp-opts{grid-template-columns:1fr}}

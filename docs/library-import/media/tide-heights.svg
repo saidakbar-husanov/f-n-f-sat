@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 320" width="560" height="320" font-family="sans-serif">
+  <rect width="560" height="320" fill="#ffffff"/>
+  <text x="60" y="24" font-size="15" font-weight="700" fill="#0f172a">High-tide height by day (m)</text>
+  <g stroke="#e5e7eb"><line x1="60" x2="540" y1="260" y2="260"/><line x1="60" x2="540" y1="200" y2="200"/><line x1="60" x2="540" y1="140" y2="140"/><line x1="60" x2="540" y1="80" y2="80"/></g>
+  <g font-size="12" fill="#475569" text-anchor="end"><text x="52" y="264">0</text><text x="52" y="204">0.75</text><text x="52" y="144">1.5</text><text x="52" y="84">2.25</text></g>
+  <g fill="#257de0">
+    <rect x="80" y="132" width="60" height="128"/><rect x="176" y="124" width="60" height="136"/><rect x="272" y="116" width="60" height="144"/>
+    <rect x="368" y="104" width="60" height="156"/><rect x="464" y="92" width="60" height="168"/>
+  </g>
+  <g font-size="12" fill="#475569" text-anchor="middle"><text x="110" y="280">Mon</text><text x="206" y="280">Tue</text><text x="302" y="280">Wed</text><text x="398" y="280">Thu</text><text x="494" y="280">Fri</text></g>
+</svg>

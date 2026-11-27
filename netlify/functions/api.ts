@@ -37,6 +37,9 @@ import { handlePractice, invalidateBankMeta } from "../lib/practice.js";
 import { handleProfile, freshHandle, usernameProblem } from "../lib/profile.js";
 import { handleAnnouncements } from "../lib/announcements.js";
 import { handleLibrary } from "../lib/library.js";
+import { handleExport } from "../lib/export.js";
+import { canonicalTags } from "../lib/taxonomy.js";
+import { handleCredits, recordChargedAttempt, outOfCredits, receipt, creditState, canStartModule, syncTestCredits, testHoldView } from "../lib/credits.js";
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -463,7 +466,20 @@ async function submitTestAttempt(attempt: TestAttemptRow) {
 // Roll an in-progress attempt forward past its deadline: per-module timing moves
 // to the next module (routing adaptive modules, submitting after the last one),
 // continuous timing submits.
+// Settles finished modules and reserves the current one (credit mode only).
+async function syncTestCreditsFor(attempt: TestAttemptRow) {
+  try {
+    const mods = await planModules(attempt);
+    await syncTestCredits(attempt, mods, async (moduleId) => (await loadModuleQuestions(moduleId)).map((q) => q.id));
+  } catch (e) { console.error("credit sync failed", e); }
+}
+// Every path that reads or advances a sitting also keeps its credit holds in step.
 async function settleExpiredAttempt(attempt: TestAttemptRow) {
+  const out = await settleExpiredAttemptInner(attempt);
+  await syncTestCreditsFor(out);
+  return out;
+}
+async function settleExpiredAttemptInner(attempt: TestAttemptRow) {
   if (attempt.submittedAt || !attempt.expiresAt || attempt.timed === false) return attempt;
   if (new Date(attempt.expiresAt).getTime() > Date.now()) return attempt;
   const [test] = await db.select().from(tests).where(eq(tests.id, attempt.testId)).limit(1);
@@ -779,7 +795,7 @@ export default async (req: Request) => {
     if (adminOps) return adminOps;
     // Subject access (student view + admin editor), practice sessions & pool,
     // profile, class announcements and the Reading Library.
-    for (const h of [handleAccess, handlePractice, handleAnnouncements, handleLibrary]) {
+    for (const h of [handleCredits, handleAccess, handlePractice, handleAnnouncements, handleLibrary, handleExport]) {
       const r = await h(req, parts, { json, requireUser });
       if (r) return r;
     }
@@ -1589,13 +1605,18 @@ export default async (req: Request) => {
         const exam = await examSettings();
         const fullTimed = opts.scope === "full" && opts.timed;
         const examMode = exam.examModeFullLength && fullTimed && (!!assignment || !(b.examMode === false && exam.allowPracticeMode));
+        const byId = new Map(mods.map((m) => [m.id, m]));
+        const planMods = plan.map((mid) => byId.get(mid)!).filter(Boolean);
+        // Credit mode: the first module's full question count must be
+        // available to reserve before the clock starts.
+        const firstCount = planMods[0] ? (await loadModuleQuestions(planMods[0].id)).length : 0;
+        const room = await canStartModule(auth.user!.id, firstCount);
+        if (!room.ok) return json({ ...outOfCredits(room.state), error: `Module 1 has ${firstCount} questions, so ${firstCount} credits are reserved before the timer starts. You have ${room.state.available} available. Only submitted answers are charged; unused credits return when the module is submitted.` }, 402);
         // Self-started sittings count against the mock-test limits; exam tasks never do.
         if (!assignment) {
           const usage = await consumeUsage(auth.user!.id, "mock");
           if (!usage.ok) return json(usage, 429);
         }
-        const byId = new Map(mods.map((m) => [m.id, m]));
-        const planMods = plan.map((mid) => byId.get(mid)!).filter(Boolean);
         const [row] = await db.insert(testAttempts).values({
           testId: test.id,
           studentId: auth.user!.id,
@@ -1610,7 +1631,9 @@ export default async (req: Request) => {
           // Untimed practice has no deadline at all, so nothing ever expires it.
           expiresAt: opts.timed ? new Date(Date.now() + minutesForModule(test, planMods, 0) * 60_000) : null,
         }).returning();
-        return json(row, 201);
+        await syncTestCreditsFor(row);
+        const credit = await testHoldView(row.id, row.studentId);
+        return json({ ...row, ...(credit ? { credit } : {}) }, 201);
       }
 
       if (method === "GET" && !id) {
@@ -1638,13 +1661,15 @@ export default async (req: Request) => {
 
       // Every read settles the clock first, so a student who walked away comes
       // back to the state the deadline dictates rather than to extra time.
+      // (settleExpiredAttempt also keeps the sitting's credit holds in step.)
       let attempt = await settleExpiredAttempt(found);
 
       if (method === "GET") {
         // The key comes back only once the sitting is closed, for review.
         const detail = await loadTestDetail(attempt.testId, !!attempt.submittedAt || role !== "student", attempt);
         if (!detail) return json({ error: "Test not found." }, 404);
-        return json({ attempt, test: detail, report: await ensureScoreReport(attempt), serverNow: Date.now() });
+        const credit = role === "student" ? await testHoldView(attempt.id, attempt.studentId) : undefined;
+        return json({ attempt, test: detail, report: await ensureScoreReport(attempt), serverNow: Date.now(), ...(credit ? { credit } : {}) });
       }
 
       if (method !== "POST" || role !== "student")
@@ -1680,13 +1705,21 @@ export default async (req: Request) => {
         const b = await req.json().catch(() => ({}));
         if (b.moduleIndex !== undefined && Number(b.moduleIndex) !== attempt.moduleIndex) return json(attempt);
         const next = attempt.moduleIndex + 1;
-        if (next >= mods.length) return json(await submitTestAttempt(attempt));
+        if (next >= mods.length) {
+          const done = await submitTestAttempt(attempt);
+          await syncTestCreditsFor(done);
+          const credit = await testHoldView(done.id, done.studentId);
+          return json({ ...done, ...(credit ? { credit } : {}) });
+        }
         await recordModuleCompletion(attempt.id, attempt.studentId, attempt.moduleIndex).catch(() => {});
         // Routes an adaptive Module 2, starts its clock (continuous timing keeps
         // the original deadline), and opens the section break when one is due.
         const [row] = await db.update(testAttempts).set(await moduleTransition(test, attempt, mods, next))
           .where(eq(testAttempts.id, attempt.id)).returning();
-        return json(row);
+        // Module boundary: settle the module just left, reserve the next one.
+        await syncTestCreditsFor(row);
+        const credit = await testHoldView(row.id, row.studentId);
+        return json({ ...row, ...(credit ? { credit } : {}) });
       }
 
       // End the break between sections early: the module's full time starts now.
@@ -1700,7 +1733,12 @@ export default async (req: Request) => {
         return json(row);
       }
 
-      if (parts[2] === "submit") return json(await submitTestAttempt(attempt));
+      if (parts[2] === "submit") {
+        const done = await submitTestAttempt(attempt);
+        await syncTestCreditsFor(done);
+        const credit = await testHoldView(done.id, done.studentId);
+        return json({ ...done, ...(credit ? { credit } : {}) });
+      }
 
       return json({ error: "Unknown test attempt action." }, 404);
     }
@@ -1986,7 +2024,16 @@ export default async (req: Request) => {
           .from(questions)
           .where(open ? (open.length ? and(bankOnly, inArray(questions.section, open)) : sql`false`) : bankOnly)
           .groupBy(questions.section, questions.category, questions.subcategory);
-        return json(rows);
+        // Same canonical tags as the practice pool, so a card's count and the
+        // set it starts always agree.
+        const merged = new Map<string, { section: string; category: string; subcategory: string; count: number }>();
+        for (const r of rows) {
+          const t = canonicalTags(r.section, r.category, r.subcategory);
+          const k = `${r.section}\u0000${t.category}\u0000${t.subcategory}`;
+          const cur = merged.get(k) ?? { section: r.section, ...t, count: 0 };
+          cur.count += Number(r.count); merged.set(k, cur);
+        }
+        return json([...merged.values()]);
       }
 
       if (id === "seed" && method === "POST") {
@@ -2127,31 +2174,39 @@ export default async (req: Request) => {
         if (area ? !allows(access.rules, question.section, area) : !subjectOpen(access.rules, question.section))
           return json({ error: "This subject is not available on your account.", locked: true }, 403);
         const selected = String(b.selected ?? "").trim().slice(0, 200);
+        // A unique id per submission (sent by the browser). A retry with the
+        // same id returns the stored attempt: never a second attempt or charge.
+        const attemptKey = /^[A-Za-z0-9_.:-]{8,80}$/.test(String(b.attemptKey || "")) ? String(b.attemptKey) : `srv-${randomBytes(12).toString("hex")}`;
+        const studentKey = `u${auth.user!.id}`;
+        const [dupe] = await db.select().from(attempts).where(and(eq(attempts.student, studentKey), eq(attempts.clientKey, attemptKey))).limit(1);
+        const keyOf = () => ({
+          answer: question.answer,
+          acceptableAnswers: Array.isArray(question.acceptableAnswers) ? question.acceptableAnswers : [],
+          explanation: question.explanation ?? "",
+        });
+        if (dupe) {
+          const cs = await creditState(auth.user!.id);
+          return json({ ...dupe, ...keyOf(), duplicate: true, ...(cs.enabled ? { credit: receipt(cs, 0, true) } : {}) });
+        }
+        // Credit mode (off unless the super admin enabled it): stop before
+        // anything is counted when no credit is left.
+        const before = await creditState(auth.user!.id);
+        if (before.enabled && selected && before.available < 1) return json(outOfCredits(before), 402);
         // Daily limits: bank & rush share the Question Bank allowance, sets use
         // the Challenging Questions allowance; class tasks and review are never limited.
         const usage = await consumeUsage(auth.user!.id, mode === "challenge" ? "challenge" : mode.startsWith("task:") || mode === "review" ? "task" : "bank");
         if (!usage.ok) return json(usage, 429);
-        const [row] = await db
-          .insert(attempts)
-          .values({
-            student: `u${auth.user!.id}`,
-            questionId: question.id,
-            section: question.section,
-            category: question.category,
-            difficulty: question.difficulty,
-            mode,
-            selected,
-            correct: selected ? isAnswerCorrect(question, selected) : false,
-          })
-          .returning();
-        await evaluateBadges(auth.user!.id);
+        const rec = await recordChargedAttempt(auth.user!.id, {
+          student: studentKey, questionId: question.id, section: question.section, category: question.category,
+          difficulty: question.difficulty, mode, selected, correct: selected ? isAnswerCorrect(question, selected) : false, clientKey: attemptKey,
+        });
+        if (rec.status === "insufficient") return json(outOfCredits(rec.credit), 402);
+        if (rec.status === "recorded") await evaluateBadges(auth.user!.id);
         // The key is revealed only once the question has been answered.
         return json({
-          ...row,
-          answer: question.answer,
-          acceptableAnswers: Array.isArray(question.acceptableAnswers) ? question.acceptableAnswers : [],
-          explanation: question.explanation ?? "",
-        }, 201);
+          ...rec.attempt, ...keyOf(), duplicate: rec.status === "duplicate",
+          ...(rec.credit ? { credit: receipt(rec.credit, rec.charged, rec.status === "duplicate") } : {}),
+        }, rec.status === "recorded" ? 201 : 200);
       }
       if (method === "GET") {
         const auth = await requireUser(req, ["student", "mentor", "admin"]);

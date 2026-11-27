@@ -29,7 +29,7 @@ function plNavCount(v){
 }
 async function plRefreshInbox(){
   if(!state.user||document.hidden) return;
-  try{ PL.inbox=await api("inbox"); }catch{ return; }
+  try{ PL.inbox=await api("inbox",{bg:true}); }catch{ return; }
   const bell=document.getElementById("plBell"); if(bell) bell.outerHTML=plBellHTML();
   document.querySelectorAll(".nav-item[data-v]").forEach(b=>{
     const old=b.querySelector(".pl-count"); if(old) old.remove();
@@ -412,6 +412,7 @@ async function viewLimits(){
   const students=users.filter(u=>u.role==="student");
   $c().innerHTML=`<div class="page-head fade"><h1>Limits &amp; Access</h1><p>Precedence: user override → class limit → platform default. Enter a number, <b>unlimited</b>, or leave blank to inherit. Limits are enforced on the server; changing them never alters past activity.</p></div>
     <div id="fxAccess"><div class="panel"><div class="spin"></div></div></div>
+    <div id="crAdmin"></div>
     <div class="panel fade"><h2>${svg("settings","ic-sm")} Platform defaults</h2>
       <h4>Students not in a class</h4>${plLimitInputs("pi_",d.platform.independent,false)}
       <h4 style="margin-top:.8rem">Class members</h4>${plLimitInputs("pm_",d.platform.member,false)}
@@ -424,6 +425,7 @@ async function viewLimits(){
       <div class="f-row" style="margin-top:.8rem"><div class="field"><label>Add an override for</label><select id="plLimUser"><option value="">Choose a student…</option>${students.map(s=>`<option value="${s.id}">${esc(s.displayName)} · ${esc(s.username||s.email||s.phone||"")}</option>`).join("")}</select></div>
       <div class="field" style="display:flex;align-items:flex-end;gap:.4rem"><button class="btn btn-ghost" onclick="const s=document.getElementById('plLimUser');if(s.value)PL_userLimits(Number(s.value),s.options[s.selectedIndex].text)">Edit limits</button><button class="btn btn-ghost" onclick="const s=document.getElementById('plLimUser');if(s.value)FX_pickStudent(Number(s.value))">Subject access</button></div></div></div>`;
   FX_renderAccess();
+  CRA_render();
 }
 async function PL_savePlatformLimits(){
   try{ await api("admin/limits/platform",{method:"PUT",body:JSON.stringify({independent:plReadLimits("pi_"),member:plReadLimits("pm_"),timezone:document.getElementById("plTz").value.trim()})}); toast("Platform limits saved"); viewLimits(); }catch(e){ toast(e.message); }

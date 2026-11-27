@@ -17,6 +17,8 @@ import {
 } from "./practice-core.js";
 import { isAnswerCorrect, type FullTestDeps } from "./fulltests.js";
 import { DOMAINS, SKILLS } from "./collections.js";
+import { canonicalTags } from "./taxonomy.js";
+import { creditState, recordChargedAttempt, outOfCredits, receipt } from "./credits.js";
 
 type DbUser = typeof users.$inferSelect;
 type QuestionRow = typeof questions.$inferSelect;
@@ -40,7 +42,10 @@ async function bankMeta(): Promise<Meta[]> {
     id: questions.id, section: questions.section, category: questions.category, subcategory: questions.subcategory,
     difficulty: questions.difficulty, type: questions.type, preview: sql<string>`left(${questions.prompt}, 400)`,
   }).from(questions).where(eq(questions.scope, "BANK"));
-  const out = rows.map((r) => ({ ...r, preview: plain(r.preview).slice(0, 160) }));
+  // Legacy spellings ("Cross-Text Connections") are unified with the
+  // taxonomy here, so the filter count and the practice set (both built from
+  // this list by filterPool) always apply the same matching rule.
+  const out = rows.map((r) => ({ ...r, ...canonicalTags(r.section, r.category, r.subcategory), preview: plain(r.preview).slice(0, 160) }));
   metaCache = { at: Date.now(), rows: out };
   return out;
 }
@@ -148,10 +153,13 @@ export async function handlePractice(req: Request, parts: string[], deps: FullTe
     const f = normalizeFilters(body.filters); f.status = [];
     const { items } = await pool(req, user, f, "rush");
     const want = Math.min(RUSH_DRAW, Math.max(1, Number(body.count) || RUSH_DRAW));
-    const drawn = seededShuffle(items, (Date.now() ^ user.id) >>> 0).slice(0, want);
+    // Credit mode: never draw more questions than credits are available.
+    const cs = await creditState(user.id);
+    if (cs.enabled && cs.available < 1) return json(outOfCredits(cs), 402);
+    const drawn = seededShuffle(items, (Date.now() ^ user.id) >>> 0).slice(0, cs.enabled ? Math.min(want, cs.available) : want);
     const rows = drawn.length ? await db.select().from(questions).where(and(inArray(questions.id, drawn.map((d) => d.id)), eq(questions.scope, "BANK"))) : [];
     const byId = new Map(rows.map((r) => [r.id, r]));
-    return json({ available: items.length, questions: drawn.map((d) => byId.get(d.id)).filter(Boolean).map((q) => studentQuestion(q!)) });
+    return json({ available: items.length, questions: drawn.map((d) => byId.get(d.id)).filter(Boolean).map((q) => studentQuestion(q!)), ...(cs.enabled ? { credit: receipt(cs, 0) } : {}) });
   }
 
   if (a !== "sessions") return json({ error: "Not found." }, 404);
@@ -292,21 +300,27 @@ export async function handlePractice(req: Request, parts: string[], deps: FullTe
       const [cur] = await db.select().from(practiceSessions).where(eq(practiceSessions.id, s.id)).limit(1);
       const prev = (cur?.answers as Record<string, AnswerEntry>)?.[k];
       if (!prev?.submitted) return json({ error: "This practice session has ended.", status: cur?.status }, 409);
-      return json({ questionId: qid, selected: prev.selected, correct: !!prev.correct, duplicate: true, ...keyOf(q) });
+      // A repeat (retry after a dropped connection, second tab, revisit):
+      // the stored result and the original charge receipt, never a new charge.
+      const cs = await creditState(user.id);
+      return json({ questionId: qid, selected: prev.selected, correct: !!prev.correct, duplicate: true, ...keyOf(q), ...(cs.enabled ? { credit: receipt(cs, 0, true) } : {}) });
     }
+    // Not counted: release the claim and keep the student's choice.
+    const release = () => db.execute(sql`update practice_sessions set answers = jsonb_set(answers, array[${k}]::text[], jsonb_build_object('selected', ${selected}::text, 'seq', 0), true) where id = ${s.id}`);
+    const before = await creditState(user.id);
+    if (before.enabled && before.available < 1) { await release(); return json(outOfCredits(before), 402); }
     const usage = await consumeUsage(user.id, area === "challenge" ? "challenge" : "bank");
-    if (!usage.ok) {
-      // Not counted: release the claim and keep the student's choice.
-      await db.execute(sql`update practice_sessions set answers = jsonb_set(answers, array[${k}]::text[], jsonb_build_object('selected', ${selected}::text, 'seq', 0), true) where id = ${s.id}`);
-      return json(usage, 429);
-    }
-    const [att] = await db.insert(attempts).values({
+    if (!usage.ok) { await release(); return json(usage, 429); }
+    // One attempt per session + question; the credit (when the mode is on) is
+    // charged in the same statement as the attempt row.
+    const rec = await recordChargedAttempt(user.id, {
       student: `u${user.id}`, questionId: q.id, section: q.section, category: q.category, difficulty: q.difficulty,
-      mode: area === "challenge" ? "challenge" : "bank", selected, correct,
-    }).returning({ id: attempts.id });
-    await db.execute(sql`update practice_sessions set answers = jsonb_set(answers, array[${k}, 'attemptId']::text[], to_jsonb(${att.id}::int), true) where id = ${s.id}`);
-    await evaluateBadges(user.id).catch(() => null);
-    return json({ questionId: qid, selected, correct, duplicate: false, ...keyOf(q) }, 201);
+      mode: area === "challenge" ? "challenge" : "bank", selected, correct, clientKey: `ps${s.id}q${qid}`,
+    });
+    if (rec.status === "insufficient") { await release(); return json(outOfCredits(rec.credit), 402); }
+    await db.execute(sql`update practice_sessions set answers = jsonb_set(answers, array[${k}, 'attemptId']::text[], to_jsonb(${rec.attempt.id}::int), true) where id = ${s.id}`);
+    if (rec.status === "recorded") await evaluateBadges(user.id).catch(() => null);
+    return json({ questionId: qid, selected, correct, duplicate: rec.status === "duplicate", ...keyOf(q), ...(rec.credit ? { credit: receipt(rec.credit, rec.charged, rec.status === "duplicate") } : {}) }, 201);
   }
 
   if ((c === "complete" || c === "abandon") && method === "POST") {
