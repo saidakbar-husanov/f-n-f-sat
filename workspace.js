@@ -94,11 +94,16 @@ function qwWorkspaceHTML(q,ctx={}){
   // question id. See qtools.js.
   const anno=ctx.anno||"mem:ws";
   const elim=typeof qaGet==="function"?qaGet(anno,q.id).el:[];
-  const head=`<div class="bb-qhead">
+  // Elimination Mode (the ABC toggle) is a view setting shared by every
+  // workspace in this tab; the eliminated choices themselves are annotations.
+  const mc=q.type!=="spr";
+  const elimOn=mc&&!locked&&typeof QA==="object"&&!!QA.elimMode;
+  const metaTip=ctx.meta?String(ctx.meta).replace(/<[^>]*>/g,"").replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,"\u0022").replace(/&#39;/g,"'"):"";
+  const head=`<div class="bb-qhead qw-head">
     <span class="bb-qnum">${esc(ctx.num??"")}</span>
     ${ctx.onFlag?`<button type="button" class="bb-mark ${ctx.flagged?"on":""}" id="pqFlag" aria-pressed="${!!ctx.flagged}" onclick="${ctx.onFlag}">${ftIcon("bookmark")} <span>${ctx.flagged?"Marked for Review":"Mark for Review"}</span></button>`:""}
-    ${ctx.meta?`<span class="bb-qmeta">${ctx.meta}</span>`:""}
-    <span style="flex:1"></span>${typeof qaToolsHTML==="function"?qaToolsHTML(q,anno,locked):""}${ctx.headExtra||""}</div>`;
+    ${ctx.meta?`<span class="bb-qmeta qw-meta" title="${esc(metaTip)}">${ctx.meta}</span>`:`<span class="qw-meta"></span>`}
+    <span class="qw-head-tools">${typeof qaToolsHTML==="function"?qaToolsHTML(q,anno,locked,ctx.headExtra||""):(ctx.headExtra||"")}</span></div>`;
   const media=q.questionImage?`<div class="bb-figure">${questionMediaHTML(q.questionImage,"Figure for this question")}</div>`:"";
   let answer;
   if(q.type==="spr"){
@@ -117,7 +122,7 @@ function qwWorkspaceHTML(q,ctx={}){
         <div class="bb-opt-main" role="radio" ${locked?`aria-disabled="true" tabindex="-1"`:`tabindex="${sel||(!given&&l==="A")?0:-1}" onpointerdown="QA_down(event)" onclick="QA_pick(event,'${l}','${ctx.onPick}')" onkeydown="QW_choiceKey(event,'${l}','${ctx.onPick}')"`} aria-checked="${sel}" aria-label="Answer ${l}${isKey?", correct answer":""}${wrong?", your answer, incorrect":locked&&sel?", your answer":""}${struck?", eliminated":""}">
           <span class="bb-ltr">${l}</span><span class="bb-otext" data-hl="choice:${l}">${mathText(q.choices[l])}${questionMediaHTML(q.choiceImages?.[l],`Answer choice ${l}`,"choice")}</span>
           ${locked&&sel?`<span class="qw-tag ${wrong?"no":"ok"}">${review?"Submitted":"Your answer"}</span>`:""}${isKey&&!sel?`<span class="qw-tag ok">Correct</span>`:""}${locked&&struck?`<span class="qw-tag qa-was-tag">Eliminated</span>`:""}</div>
-        ${locked?"":`<button type="button" class="bb-strike qa-strike" onclick="QA_elim(event,'${l}')" aria-pressed="${struck}" aria-label="${struck?"Restore":"Eliminate"} answer ${l}" title="${struck?"Restore":"Eliminate"} answer ${l}">${struck?"Undo":`<s>${l}</s>`}</button>`}</div>`;
+        ${locked?"":`<button type="button" class="bb-strike qa-strike" onpointerdown="event.stopPropagation()" onclick="QA_elim(event,'${l}')" aria-pressed="${struck}" aria-label="${struck?"Restore":"Eliminate"} answer ${l}" title="${struck?"Restore":"Eliminate"} answer ${l}" ${elimOn?"":`tabindex="-1" aria-hidden="true"`}>${struck?"Undo":`<s>${l}</s>`}</button>`}</div>`;
     }).join("")}</div>`;
   }
   const expl=res?.explanation??(ctx.showKey?q.explanation:undefined);
@@ -126,9 +131,10 @@ function qwWorkspaceHTML(q,ctx={}){
   const passage=q.passage?`<div class="bb-passage" data-hl="passage">${mathText(q.passage)}</div>`:"";
   const qa=`data-qa="${esc(anno)}" data-qid="${esc(q.id??"")}" data-qa-clear="${esc(ctx.onClear||"")}"`;
   const right=`${head}${qwIsSplit(q,sec)?"":media}${prompt}${answer}<div id="${ctx.feedbackId||"explainArea"}" class="qw-feedback">${feedback}</div>`;
-  if(!qwIsSplit(q,sec)) return `<main class="bb-work single" ${qa}><section class="bb-center">${right}</section></main>`;
+  const qaCls=elimOn?" qa-elim-on":"";
+  if(!qwIsSplit(q,sec)) return `<main class="bb-work single${qaCls}" ${qa}><section class="bb-center">${right}</section></main>`;
   const left=sec==="math"&&q.type==="spr"&&!q.passage?`${QW_SPR_DIRECTIONS}${media}`:`${media}${passage}`;
-  return `<main class="bb-work split" ${qa} style="--split:${QW.split}%">
+  return `<main class="bb-work split${qaCls}" ${qa} style="--split:${QW.split}%">
     <section class="bb-pane bb-left" aria-label="Source material">${left}</section>${qwDividerHTML()}
     <section class="bb-pane bb-right" aria-label="Question">${right}</section></main>`;
 }

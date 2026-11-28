@@ -18,8 +18,37 @@ body.qw-wide .content{max-width:none}
 /* The Full Mock runner: one fixed row so each pane scrolls on its own. */
 .bb:not(.bb-inline)>.bb-work.split{grid-template-rows:minmax(0,1fr)}
 .bb-work.split>.bb-pane{min-width:0;min-height:0}
+/* ROOT CAUSE of the desktop bug: .bb-work is `flex:1` (basis 0%) inside the
+   inline .bb flex column, whose own height is indefinite. Chrome/Edge then
+   size the item from its content and ignore `height`, so the grid grew to the
+   full passage height, neither pane overflowed and the page scrolled instead
+   (WebKit on iPad resolved the basis differently, which is why tablets
+   worked). An inline workspace is sized by its own height, never by flex. */
+.bb.bb-inline>.bb-work{flex:0 0 auto}
 .pq-work{--qw-h:max(380px,calc(100dvh - 290px))}
 .rush-work{--qw-h:max(340px,calc(100dvh - 380px))}
+/* Desktop and laptop: Question Bank, Challenging Questions, tasks, reviews and
+   Question Rush fit the viewport. The app header keeps its height, the
+   question frame fills the rest, the workspace takes whatever is left between
+   the toolbar rows and the Previous / Next bar, and only the two panes scroll.
+   On a very short window the content column scrolls as a fallback, so nothing
+   is ever unreachable. */
+@media(min-width:761px) and (min-height:480px){
+  body.qw-wide .shell{height:100vh;height:100dvh;min-height:0}
+  body.qw-wide .main{height:100vh;height:100dvh;min-height:0;overflow:hidden}
+  body.qw-wide .topbar{flex:none}
+  body.qw-wide .content{flex:1 1 0;min-height:0;display:flex;flex-direction:column;overflow-y:auto;overscroll-behavior:contain;padding-top:1rem;padding-bottom:1rem}
+  body.qw-wide .content>.q-shell.pq{flex:1 1 0;min-height:380px;width:100%;display:flex;flex-direction:column}
+  body.qw-wide .q-shell.pq>*{flex:none}
+  body.qw-wide .q-shell.pq>.q-topline{margin-bottom:.6rem}
+  body.qw-wide .q-shell.pq>.pq-work{flex:1 1 0;min-height:240px;display:flex;flex-direction:column;margin-top:.6rem}
+  body.qw-wide .q-shell.pq>.pq-work>.bb-work{flex:1 1 0;min-height:0;height:auto;max-height:none}
+  body.qw-wide .q-shell.pq>.pq-work>.bb-work.single{overflow-y:auto;overscroll-behavior:contain}
+  body.qw-wide .q-shell.pq>.pq-work>.pq-actions{flex:none}
+  body.qw-wide .q-shell.pq>.pq-bar{position:relative;bottom:auto;margin-top:.6rem}
+  /* Docked Desmos: the workspace scrolls as one column beside the calculator. */
+  body.qw-wide.df-dock-practice .q-shell.pq>.pq-work>.bb-work{overflow-y:auto}
+}
 /* Previews inside a dialog keep the split and its independent scrolling; the
    dialog's header and footer stay outside the panes. */
 .ft-modal-body .bb.bb-inline .bb-work.split{--qw-h:max(320px,calc(100dvh - 17rem));min-height:320px}
