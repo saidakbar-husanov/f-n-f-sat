@@ -344,8 +344,8 @@ body.test-paused{overflow:hidden}
 .spin{width:34px;height:34px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:rot .8s linear infinite;margin:2rem auto}
 @keyframes rot{to{transform:rotate(360deg)}}
 
-.toast{position:fixed;bottom:1.4rem;left:50%;transform:translateX(-50%) translateY(120%);background:var(--ink);color:var(--bg);padding:.7rem 1.3rem;border-radius:100px;font-size:.87rem;font-weight:600;z-index:999;transition:transform .35s cubic-bezier(.2,.9,.3,1);box-shadow:var(--shadow);display:flex;align-items:center;gap:.5rem}
-.toast.show{transform:translateX(-50%) translateY(0)}
+.toast{position:fixed;bottom:1.4rem;left:50%;transform:translateX(-50%) translateY(120%);background:var(--ink);color:var(--bg);padding:.7rem 1.3rem;border-radius:100px;font-size:.87rem;font-weight:600;z-index:999;transition:transform .35s cubic-bezier(.2,.9,.3,1),visibility 0s linear .35s;visibility:hidden;box-shadow:var(--shadow);display:flex;align-items:center;gap:.5rem}
+.toast.show{transform:translateX(-50%) translateY(0);visibility:visible;transition-delay:0s}
 
 .scrim{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:40;opacity:0;pointer-events:none;transition:opacity .25s}
 @media(max-width:860px){

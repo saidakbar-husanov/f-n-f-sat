@@ -458,12 +458,12 @@ function renderQuestion(){
     num:P.idx+1, section:q.section, mode:"answer", given:it.selected??"", result,
     flagged:!!it.flagged, onFlag:"PQ_flag()", onPick:"pickChoice", onSpr:"PQ_sprInput", onSprEnter:"checkAnswer()",
     anno:pqAnnoCtx(), onClear:"PQ_clearPick",
-    meta:`${esc(q.category)}${q.subcategory?` · ${esc(q.subcategory)}`:""} · ${dl}`, headExtra:tools,
+    meta:`${esc(q.category)}${q.subcategory?` · ${esc(q.subcategory)}`:""} · ${dl}`, headExtra:tools+(typeof plReportButtonHTML==="function"?plReportButtonHTML(q.id,reportSrc,null,true):""),
   });
   $c().innerHTML=practiceFrameHTML(`<div class="bb bb-inline pq-work" data-qid="${q.id}">${work}
       <div class="q-actions pq-actions">
         <span class="feedback-tag" id="fbTag"></span>
-        <button class="btn btn-ghost btn-sm" id="saveQBtn" onclick="toggleSavedQuestion(${q.id})">${svg("save","ic-sm")} Save for review</button>${plReportButtonHTML(q.id,reportSrc)}<span class="spacer"></span>
+        <button class="btn btn-ghost btn-sm" id="saveQBtn" onclick="toggleSavedQuestion(${q.id})">${svg("save","ic-sm")} Save for review</button><span class="spacer"></span>
         ${typeof CR_costNote==="function"?CR_costNote(result):""}
         ${result?"":`<button class="btn btn-primary" id="checkBtn" onclick="checkAnswer()" ${String(it.selected??"").trim()?"":"disabled"}>Check answer</button>`}
       </div></div>`);

@@ -880,13 +880,14 @@ function ftWorkspaceHTML(q,ctx){
   const sec=ctx.section||q.section;
   const flagged=!!ctx.flagged, given=ctx.given||"", elim=ctx.elim||[];
   const abc=!ctx.preview&&BB.abc;
-  const head=`<div class="bb-qhead">
+  const head=`<div class="bb-qhead qw-head">
     <span class="bb-qnum">${ctx.num}</span>
     ${ctx.preview?`<span class="bb-qmeta">${esc(q.category)}${q.subcategory?` · ${esc(q.subcategory)}`:""}</span>`
       :`<button type="button" class="bb-mark ${flagged?"on":""}" id="flagBtn" aria-pressed="${flagged}" onclick="toggleTestFlag(${q.id})">${ftIcon("bookmark")} ${flagged?"Marked for Review":"Mark for Review"}</button>`}
     <span style="flex:1"></span>
     ${ctx.preview?"":`<button type="button" class="bb-hlclear" id="hlClear" onclick="FT_hlClear()" ${ctx.hlCount?"":"hidden"} title="Remove every highlight on this question">${ftIcon("marker")} Clear highlights</button>`}
-    ${q.type!=="spr"&&!ctx.preview?`<button type="button" class="bb-abc ${abc?"on":""}" title="Cross out answer choices" aria-pressed="${abc}" onclick="FT_abc()"><s>ABC</s></button>`:""}
+    ${q.type!=="spr"&&!ctx.preview&&elim.length?`<button type="button" class="bb-hlclear" id="elClear" onclick="FT_clearElim()" title="Restore every eliminated answer choice">${svg("x","ic-sm")} Clear eliminations</button>`:""}
+    ${q.type!=="spr"&&!ctx.preview?`<button type="button" class="bb-abc ${abc?"on":""}" title="${abc?"Disable":"Enable"} answer elimination" aria-label="${abc?"Disable":"Enable"} answer elimination" aria-pressed="${abc}" onclick="FT_abc()"><s>ABC</s></button>`:""}
   </div>`;
   const media=q.questionImage?`<div class="bb-figure">${questionMediaHTML(q.questionImage,"Figure for this question")}</div>`:"";
   let answer;
@@ -903,7 +904,7 @@ function ftWorkspaceHTML(q,ctx){
       return `<div class="bb-opt ${sel?"sel":""} ${struck?"struck":""} ${ok?"key":""}" data-l="${l}">
         <div class="bb-opt-main" ${ctx.preview?"":`role="radio" tabindex="0" aria-checked="${sel}" aria-label="Answer ${l}" onpointerdown="FT_hlDown(event)" onclick="ftChoiceClick(event,'${l}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();pickTestChoice('${l}')}"`}>
           <span class="bb-ltr">${l}</span><span class="bb-otext" data-hl="choice:${l}">${mathText(q.choices[l])}${questionMediaHTML(q.choiceImages?.[l],`Answer choice ${l}`,"choice")}</span></div>
-        ${abc?`<button type="button" class="bb-strike" onclick="FT_strike('${l}')" title="${struck?"Undo":"Cross out"} ${l}">${struck?"Undo":`<s>${l}</s>`}</button>`:""}
+        ${abc?`<button type="button" class="bb-strike" onclick="FT_strike('${l}')" title="${struck?"Restore":"Eliminate"} answer ${l}" aria-label="${struck?"Restore":"Eliminate"} answer ${l}" aria-pressed="${struck}">${struck?"Undo":`<s>${l}</s>`}</button>`:""}
       </div>`;
     }).join("")}</div>`;
   }
@@ -1072,6 +1073,13 @@ function FT_strike(letter){
   map[q.id]=[...set]; ftSetElim(map);
   // Crossing out the selected answer clears the selection, as in the real app.
   if(set.has(letter)&&T.answers[String(q.id)]===letter){ saveTestAnswer(q.id,""); }
+  BB.keepScroll=true; renderTestQuestion();
+}
+// Restores every crossed-out choice on this question; the answer is untouched.
+function FT_clearElim(){
+  const mod=currentTestModule(); const q=mod?.questions[T.qIdx]; if(!q) return;
+  const map=ftElim(); if(!(map[q.id]||[]).length) return;
+  map[q.id]=[]; ftSetElim(map);
   BB.keepScroll=true; renderTestQuestion();
 }
 function FT_sprPreview(v){ const el=document.getElementById("sprPrev"); if(el){ el.innerHTML=ftSprPreview(v); typesetMath(el); } }

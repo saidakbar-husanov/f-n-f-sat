@@ -87,7 +87,7 @@ document.addEventListener("scroll",qtTipHide,true);
 document.addEventListener("keydown",e=>{ if(e.key==="Escape"&&QT.focus&&!document.querySelector("#pqLayer,.ft-modal-back,#qaBar,#bbPop")&&!document.body.classList.contains("bb-on")) QT_focusMode(false); });
 
 // ──────────────── personal annotations ────────────────
-const QA={mem:new Map(),pending:null,down:null,raf:0};
+const QA={mem:new Map(),pending:null,down:null,raf:0,elimMode:(()=>{ try{ return sessionStorage.getItem("fnf_qa_elim")==="1"; }catch{ return false; } })()};
 const QA_COLORS=[["yellow","Yellow"],["green","Green"],["blue","Blue"],["pink","Pink"]];
 const qaMemCtx=ctx=>String(ctx).startsWith("mem:");
 function qaStoreKey(ctx){ return `fnf_qa_${state?.user?.key||state?.user?.id||"anon"}_${ctx}`; }
@@ -108,14 +108,36 @@ function qaPut(ctx,qid,entry){
 const qaWorkOf=el=>el?.closest?.(".bb-work[data-qa]");
 const qaEntry=work=>qaGet(work.dataset.qa,work.dataset.qid);
 
-// Toolbar in the question header: clear actions appear only when there is something to clear.
-function qaToolsHTML(q,ctx,locked){
+// Toolbar in the question header (right side): contextual Clear actions
+// appear only when there is something to clear, then any screen-specific tools
+// (calculator, report), the highlighter and the ABC Elimination Mode toggle.
+function qaToolsHTML(q,ctx,locked,extra=""){
   const e=qaGet(ctx||"mem:ws",q.id);
-  const mc=q.type!=="spr";
+  const mc=q.type!=="spr", on=mc&&!locked&&!!QA.elimMode;
+  const marker=typeof ftIcon==="function"?ftIcon("marker"):"";
   return `<span class="qa-tools">
-    <button type="button" class="bb-hlclear qa-clear-hl" onclick="QA_clearHl(this)" ${e.hl.length?"":"hidden"} title="Remove every highlight on this question">${typeof ftIcon==="function"?ftIcon("marker"):""} Clear highlights</button>
-    ${mc&&!locked?`<button type="button" class="bb-hlclear qa-clear-el" onclick="QA_clearElim(this)" ${e.el.length?"":"hidden"} title="Restore every eliminated answer choice">${qtIc("x")} Clear eliminations</button>`:""}
-    <span class="qa-hint" title="Select text in the passage, question or an answer choice to highlight or underline it">${typeof ftIcon==="function"?ftIcon("marker"):""}<span>Select text to highlight</span></span></span>`;
+    <button type="button" class="bb-hlclear qw-tbtn qa-clear-hl" onclick="QA_clearHl(this)" ${e.hl.length?"":"hidden"} title="Remove every highlight on this question">${marker}<span>Clear highlights</span></button>
+    ${mc&&!locked?`<button type="button" class="bb-hlclear qw-tbtn qa-clear-el" onclick="QA_clearElim(this)" ${e.el.length?"":"hidden"} title="Restore every eliminated answer choice">${qtIc("x")}<span>Clear eliminations</span></button>`:""}
+    ${extra}
+    <button type="button" class="qw-tbtn qa-hint" onclick="QA_hlHelp()" title="Highlighter — select text in the passage, question or an answer choice to highlight or underline it" aria-label="Highlighter: select text in the passage, question or an answer choice to highlight or underline it">${marker}<span>Highlight</span></button>
+    ${mc&&!locked?`<button type="button" class="bb-abc qa-abc ${on?"on":""}" onclick="QA_elimMode()" aria-pressed="${on}" title="${on?"Disable":"Enable"} answer elimination" aria-label="${on?"Disable":"Enable"} answer elimination"><s>ABC</s></button>`:""}</span>`;
+}
+// Elimination Mode: shows (or hides) the per-choice controls in place. It never
+// re-renders the question, so selections, highlights and scroll positions stay
+// put, and turning it off keeps every eliminated choice crossed out.
+function QA_elimMode(on){
+  QA.elimMode=on===undefined?!QA.elimMode:!!on;
+  try{ sessionStorage.setItem("fnf_qa_elim",QA.elimMode?"1":""); }catch{}
+  document.querySelectorAll(".bb-work[data-qa]").forEach(w=>{
+    const live=!!w.querySelector(".qa-abc");
+    w.classList.toggle("qa-elim-on",QA.elimMode&&live);
+    w.querySelectorAll(".qa-strike").forEach(b=>{ if(QA.elimMode&&live){ b.removeAttribute("tabindex"); b.removeAttribute("aria-hidden"); } else { b.tabIndex=-1; b.setAttribute("aria-hidden","true"); } });
+    w.querySelectorAll(".qa-abc").forEach(b=>{ b.classList.toggle("on",QA.elimMode); b.setAttribute("aria-pressed",String(QA.elimMode)); const t=`${QA.elimMode?"Disable":"Enable"} answer elimination`; b.title=t; b.setAttribute("aria-label",t); });
+  });
+}
+function QA_hlHelp(){
+  if(document.getElementById("qaBar")) return;
+  if(typeof toast==="function") toast("Select text in the passage, question or an answer choice to highlight or underline it.");
 }
 function qaSyncTools(work){
   const e=qaEntry(work);

@@ -106,8 +106,10 @@ function PL_copy(id){
 }
 
 // ──────────────── report a question ────────────────
-function plReportButtonHTML(questionId,source,attemptId){
+function plReportButtonHTML(questionId,source,attemptId,compact){
   if(state.user?.role!=="student") return "";
+  // Compact: the question toolbar's Report control (icon + short label).
+  if(compact) return `<button type="button" class="qw-tbtn pl-report" onclick="PL_reportQuestion(${questionId},'${source}',${attemptId||"null"})" title="Report a problem with this question">${svg("flag","ic-sm")}<span>Report</span></button>`;
   return `<button type="button" class="btn btn-ghost btn-sm pl-report" onclick="PL_reportQuestion(${questionId},'${source}',${attemptId||"null"})">${svg("flag","ic-sm")} Report question</button>`;
 }
 function PL_reportQuestion(questionId,source,attemptId){

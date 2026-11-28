@@ -43,11 +43,34 @@ body.qt-focus .topbar{padding-top:.55rem;padding-bottom:.55rem}
 .qt-focus-btn:focus-visible,.side-ctl:focus-visible,.side-restore:focus-visible,.qt-exit-focus:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 
 /* ───────── annotations ───────── */
-.qa-tools{display:inline-flex;align-items:center;gap:.3rem;flex-wrap:wrap}
-.qa-hint{display:inline-flex;align-items:center;gap:.3rem;font-size:.74rem;color:var(--ink3);padding:0 .3rem}
-.qa-hint .ic{width:13px;height:13px}
-.qa-tools .bb-hlclear .ic{width:14px;height:14px}
-@media(max-width:1100px){ .qa-hint span{display:none} }
+/* ───────── question toolbar (shared workspace + Full Mock runner) ─────────
+   One compact row: number · Mark for Review · domain / skill / difficulty
+   (one line, truncated with a tooltip) · contextual Clear actions, tools,
+   Report, Highlighter, ABC. Wraps gracefully on narrow panes. */
+.bb-hlclear[hidden],.qw-tbtn[hidden]{display:none!important}
+.bb-qhead.qw-head{flex-wrap:wrap;row-gap:.25rem;column-gap:.5rem;padding:.25rem .35rem .25rem 0;margin-bottom:1rem;min-height:2.5rem}
+.bb-qhead .bb-mark{white-space:nowrap;flex:none}
+.qw-meta{flex:1 1 0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.qw-head-tools{margin-left:auto;display:flex;align-items:center;flex:none;max-width:100%}
+.qa-tools{display:inline-flex;align-items:center;gap:.25rem;flex-wrap:wrap;justify-content:flex-end}
+.qw-tbtn{display:inline-flex;align-items:center;gap:.3rem;height:30px;padding:0 .6rem;border-radius:100px;border:1px solid var(--border2);background:var(--bb-bg,var(--panel));color:var(--ink2);font-size:.78rem;font-weight:600;white-space:nowrap;line-height:1}
+.qw-tbtn:hover{color:var(--ink);border-color:var(--ink3)}
+.qw-tbtn:focus-visible,.qa-abc:focus-visible{outline:2px solid var(--bb-blue,#3B5BDB);outline-offset:2px}
+.qw-tbtn .ic{width:14px;height:14px;flex:none}
+.qa-tools .bb-hlclear{border-color:transparent;background:transparent}
+.qa-tools .bb-hlclear:hover{background:var(--panel);border-color:var(--border2)}
+.qa-tools .qw-tool{height:30px;border-radius:100px;border:1px solid var(--border2);padding:0 .6rem;gap:.3rem}
+.qa-tools .pl-report{margin-left:0}
+.qa-hint{color:var(--ink2)}
+.bb-abc,.qa-abc{height:30px;min-width:2.9rem;display:inline-grid;place-items:center;padding:0 .45rem;border-radius:8px;font-size:.78rem;font-weight:800;letter-spacing:.02em;border:1.5px solid var(--border2);background:var(--bb-bg,var(--panel));color:var(--ink2)}
+.bb-abc:hover{color:var(--ink);border-color:var(--ink3)}
+.bb-abc.on{background:var(--bb-blue);border-color:var(--bb-blue);color:#fff;box-shadow:0 0 0 3px color-mix(in srgb,var(--bb-blue) 25%,transparent)}
+/* Labels collapse to icons (tooltips keep the names) when space is tight. */
+/* Labels collapse to icons (tooltips keep the names) when the pane is narrow —
+   measured on the pane itself, so dragging the splitter adapts the toolbar. */
+.bb-work>.bb-right,.bb-work>.bb-center{container-type:inline-size}
+@container (max-width:640px){ .qw-head .qa-hint span,.qw-head .qw-tool span,.qw-head .pl-report span{display:none} .qw-head .qa-hint,.qw-head .qw-tool,.qw-head .pl-report{padding:0 .5rem} }
+@container (max-width:470px){ .qw-head .qa-tools .bb-hlclear span{display:none} }
 .bb mark.bb-hl.qa-hl{color:#1a1a1a}
 .bb mark.qa-yellow{background:#FFE066}
 .bb mark.qa-green{background:#B2F2BB}
@@ -66,15 +89,28 @@ body.qt-focus .topbar{padding-top:.55rem;padding-bottom:.55rem}
 .qa-sw-yellow{background:#FFE066}.qa-sw-green{background:#B2F2BB}.qa-sw-blue{background:#A5D8FF}.qa-sw-pink{background:#FCC2D7}
 .qa-u-btn{min-height:30px;padding:.2rem .55rem}
 .qa-u-btn.on{background:color-mix(in srgb,var(--bg) 22%,transparent)}
-/* Elimination: readable but clearly ruled out; restoring is one click. */
-.bb-opt .qa-strike{align-self:center;height:36px;border:1.5px solid var(--border2)}
-.bb-opt .qa-strike:focus-visible{outline:2px solid var(--bb-blue);outline-offset:2px}
-.bb-opt.struck .bb-opt-main{opacity:.55}
-.bb-opt.struck .qa-strike{border-color:var(--ink2);color:var(--ink)}
+/* Elimination. Mode off: answer cards use the full width and no control
+   (or space) is shown. Mode on (ABC toggle): a small round control sits inside
+   the right edge of every card. Eliminated choices stay crossed out in both
+   modes; the styling is neutral and never hints at correctness. Shared by the
+   workspace (.qa-strike, always rendered, hidden while off) and the Full Mock
+   runner (.bb-strike, rendered only while its ABC mode is on). */
+.bb-opt{position:relative}
+.bb-opt>.bb-strike{position:absolute;top:50%;right:.65rem;transform:translateY(-50%);z-index:1;width:auto;min-width:1.9rem;height:1.9rem;padding:0 .35rem;display:grid;place-items:center;border-radius:100px;border:1.5px solid var(--ink3);background:var(--bb-bg,var(--panel));color:var(--ink2);font-size:.86rem;font-weight:700;line-height:1;user-select:none;-webkit-user-select:none;cursor:pointer}
+.bb-opt>.bb-strike:hover{border-color:var(--ink);color:var(--ink);background:var(--panel2)}
+.bb-opt>.bb-strike:focus-visible{outline:2px solid var(--bb-blue);outline-offset:2px}
+.bb-opt>.bb-strike s{text-decoration-thickness:1.5px}
+.bb-opt:has(>.bb-strike) .bb-opt-main{padding-right:3.4rem}
+.bb-work:not(.qa-elim-on) .bb-opt>.qa-strike{display:none}
+.bb-work:not(.qa-elim-on) .bb-opt:has(>.qa-strike) .bb-opt-main{padding-right:.9rem}
+.bb-opt.struck>.bb-strike{opacity:1;font-size:.7rem;border-color:var(--ink2);color:var(--ink)}
+.bb-opt.struck .bb-opt-main{opacity:.6}
+.bb-opt.struck .bb-otext{text-decoration:line-through;text-decoration-thickness:1.5px}
+.bb-opt.struck .bb-opt-main::after{left:.6rem;right:.6rem;border-top:1.5px solid var(--ink2);opacity:.8;pointer-events:none}
 .bb-opt.qa-was .bb-opt-main{opacity:.7}
 .bb-opt.qa-was .bb-opt-main::after{border-top-style:dashed}
 .qa-was-tag{background:var(--panel2)}
-@media(max-width:760px){ .bb-opt .qa-strike{width:2.8rem;height:40px} }
+@media(max-width:760px){ .bb-opt>.bb-strike{min-width:2.3rem;height:2.3rem} .bb-opt:has(>.bb-strike) .bb-opt-main{padding-right:3.8rem} }
 
 /* ───────── Question Progress & Difficulty Navigator ───────── */
 .qn-head{flex:none;padding:.6rem 1rem .5rem;border-bottom:1px solid var(--border);display:grid;gap:.5rem}
