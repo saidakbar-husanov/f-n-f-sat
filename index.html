@@ -33,6 +33,7 @@
 <link rel="stylesheet" href="/learning.css"/>
 <link rel="stylesheet" href="/features.css"/>
 <link rel="stylesheet" href="/workspace.css"/>
+<link rel="stylesheet" href="/qtools.css"/>
 <link rel="stylesheet" href="/library.css"/>
 <link rel="stylesheet" href="/export.css"/>
 <style>
@@ -756,6 +757,7 @@ li[data-list="ordered"]{list-style-type:decimal}
 <script src="/features.js"></script>
 <!-- Shared Full Mock question workspace (split panes, divider, review), section navigation guard -->
 <script src="/workspace.js"></script>
+<script src="/qtools.js"></script>
 <!-- Optional student credits (balance, reservations, receipts) and the super-admin credit controls -->
 <script src="/credits.js"></script>
 <!-- Reading Library rich editor (paragraphs, images, charts) and JSON import -->
@@ -2366,15 +2368,16 @@ function navActiveGroup(v){
 }
 function shellHTML(){
   const u=state.user;
-  const items=NAV[u.role].map(n=>`<button class="nav-item ${navActiveGroup(state.view)===n.v?"active":""}" data-v="${n.v}" ${navAllowed(n.v)?"":"hidden"} onclick="go('${n.v}')" ${navActiveGroup(state.view)===n.v?'aria-current="page"':""}>${svg(n.icon)}<span>${n.label}</span>${plNavCount(n.v)}</button>`).join("");
+  const items=NAV[u.role].map(n=>`<button class="nav-item ${navActiveGroup(state.view)===n.v?"active":""}" data-v="${n.v}" ${navAllowed(n.v)?"":"hidden"} onclick="go('${n.v}')" data-tip="${esc(n.label)}" ${navActiveGroup(state.view)===n.v?'aria-current="page"':""}>${svg(n.icon)}<span class="nav-label">${n.label}</span>${plNavCount(n.v)}</button>`).join("");
   const theme=currentTheme();
-  return `<div class="shell" id="shell">
+  return `<div class="shell ${typeof qtShellClass==="function"?qtShellClass():""}" id="shell">
     <div class="scrim" id="scrim"></div>
     <aside class="sidebar" aria-label="Sections">
       <div class="side-brand">
         ${brandMark()}<b>${esc(SITE.name)}</b>
         <span class="role-tag ${u.role==="student"?"stu":""}">${u.role}</span>
       </div>
+      ${typeof qtSideCtlHTML==="function"?qtSideCtlHTML():""}
       <nav class="side-nav" aria-label="${u.role==="admin"?"Studio":u.role==="mentor"?"Mentor workspace":"Practice"} sections">
       <div class="nav-group-label">${u.role==="admin"?"Studio":u.role==="mentor"?"Mentor workspace":"Practice"}</div>
       ${items}
@@ -2385,12 +2388,13 @@ function shellHTML(){
           <div class="un">${esc(u.name)}</div>
           <div class="ur">${u.role==="admin"?"Administrator":u.role==="mentor"?"Mentor":"Student"}</div>
         </div>
-        <button onclick="logout()" title="Log out">${svg("logout")}</button>
+        <button onclick="logout()" title="Log out" aria-label="Log out" data-tip="Log out">${svg("logout")}</button>
       </div>
     </aside>
     <div class="main">
       <header class="topbar">
-        <button class="hamburger" onclick="openNav()">${svg("menu")}</button>
+        <button class="hamburger" onclick="openNav()" aria-label="Open menu">${svg("menu")}</button>
+        ${typeof qtTopCtlHTML==="function"?qtTopCtlHTML():""}
         <div class="crumbs" id="crumbs"></div>
         ${plBellHTML()}
         <button type="button" class="theme-toggle" data-theme-toggle onclick="toggleTheme(event)">${themeToggleInner(theme)}</button>
@@ -2423,6 +2427,8 @@ function go(view, extra={}){
   if(typeof lxStopPlayer==="function") lxStopPlayer();
   if(view!=="testsit") leaveTestSit();
   if(TQ) closeTestQuestionEditor();
+  // Focus Mode belongs to the question screen it was turned on in.
+  if(typeof QT_focusMode==="function"&&QT.focus&&view!==state.view) QT_focusMode(false);
   if(view!=="practice"&&view!=="rush"&&view!=="testsit"&&desmosFloatEl) desmosDestroy();
   // An explicit navigation ends the in-progress pointer; the views that need it
   // (practice, test) write a fresh one as soon as they render.
@@ -2637,7 +2643,7 @@ async function viewReview(){
   const rows=tab==="mistakes"?REVIEW_CACHE.mistakes:REVIEW_CACHE.savedQuestions;
   const questions=rows.map(row=>row.question);
   const details=rows.map(row=>fullQuestionHTML(row.question,tab==="mistakes"?`Answered on ${new Date(row.attempt.createdAt).toLocaleDateString()}`:`Saved ${new Date(row.saved.createdAt).toLocaleDateString()}`,tab==="mistakes"?{given:row.attempt.selected||""}:{})).join("");
-  $c().innerHTML=`<div class="page-head fade"><h1>Review questions</h1><p>Keep saved questions and past mistakes in separate, focused queues.</p></div><div class="calc-tabs fade"><button class="${tab==='mistakes'?'on':''}" onclick="go('review',{reviewType:'mistakes'})">Mistaken (${REVIEW_CACHE.mistakes.length})</button><button class="${tab==='saved'?'on':''}" onclick="go('review',{reviewType:'saved'})">Saved (${REVIEW_CACHE.savedQuestions.length})</button></div><div class="fade">${questions.length?`<button class="btn btn-primary btn-sm" onclick="startReview('${tab}')">Practice this review queue</button>${details}`:`<div class="empty"><p>No ${tab==='mistakes'?'mistaken':'saved'} questions yet.</p></div>`}</div>`;
+  $c().innerHTML=`<div class="page-head fade"><h1>Review questions</h1><p>Keep saved questions and past mistakes in separate, focused queues.</p></div><div class="calc-tabs fade"><button class="${tab==='mistakes'?'on':''}" onclick="go('review',{reviewType:'mistakes'})">Mistaken (${REVIEW_CACHE.mistakes.length})</button><button class="${tab==='saved'?'on':''}" onclick="go('review',{reviewType:'saved'})">Saved (${REVIEW_CACHE.savedQuestions.length})</button></div><div class="fade">${questions.length?`<div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap"><button class="btn btn-primary btn-sm" onclick="startReview('${tab}')">Practice this review queue</button><span style="flex:1"></span>${typeof qtFocusBtnHTML==="function"?qtFocusBtnHTML():""}</div>${details}`:`<div class="empty"><p>No ${tab==='mistakes'?'mistaken':'saved'} questions yet.</p></div>`}</div>`;
 }
 function startReview(type){
   const rows=type==="mistakes"?REVIEW_CACHE.mistakes:REVIEW_CACHE.savedQuestions;
@@ -3526,9 +3532,10 @@ function restoreActiveQuiz(){
 function renderRushQ(){
   if(R.idx>=R.list.length){ endRush(); return; }
   const q=R.list[R.idx];
-  const work=qwWorkspaceHTML(q,{num:R.answered+1,section:q.section,mode:"answer",given:R.sel||"",onPick:"rushPick",onSpr:"rushSprInput",onSprEnter:"rushAnswer(document.getElementById('sprIn').value)",
+  const work=qwWorkspaceHTML(q,{num:R.answered+1,section:q.section,mode:"answer",given:R.sel||"",onPick:"rushPick",onSpr:"rushSprInput",onSprEnter:"rushAnswer(document.getElementById('sprIn').value)",anno:"mem:rush",
     meta:esc(q.category),headExtra:q.section==="math"?`<button type="button" class="bb-tool qw-tool" onclick="toggleDesmosFloat()">${svg("calc","ic-sm")}<span>Calculator</span></button>`:""});
   $c().innerHTML=`<div class="q-shell fade pq">
+    <div class="q-topline"><span style="flex:1"></span>${typeof qtFocusBtnHTML==="function"?qtFocusBtnHTML():""}</div>
     <div class="rush-hero">
       <div class="rush-timer ${R.timeLeft<=10?'low':''}" id="rushTimer">${fmtTime(R.timeLeft)}</div>
       <div class="rush-meta">
@@ -3577,7 +3584,7 @@ async function rushAnswer(val){
   // brief visual feedback
   R.sel="";
   const host=document.querySelector(".rush-work");
-  if(host){ host.innerHTML=qwWorkspaceHTML(q,{num:R.answered,section:q.section,mode:"answer",result:{selected:sel,correct,answer:graded.answer,acceptableAnswers:graded.acceptableAnswers},meta:esc(q.category)}); typesetMath(host); }
+  if(host){ host.innerHTML=qwWorkspaceHTML(q,{num:R.answered,section:q.section,mode:"answer",anno:"mem:rush",result:{selected:sel,correct,answer:graded.answer,acceptableAnswers:graded.acceptableAnswers},meta:esc(q.category)}); typesetMath(host); }
   document.getElementById("rScore").textContent=R.score;
   document.getElementById("rStreak").textContent=R.streak;
   document.getElementById("rAns").textContent=R.answered;
@@ -5672,6 +5679,7 @@ window.addEventListener("popstate",e=>{
     if(TQ) closeTestQuestionEditor();
     if(typeof ftCloseModal==="function") ftCloseModal();
     routeFromUrl();
+    if(typeof QT_focusMode==="function"&&QT.focus&&state.view!==prev) QT_focusMode(false);
     if(state.view!=="practice"&&state.view!=="rush"&&state.view!=="testsit"&&desmosFloatEl) desmosDestroy();
     closeNav(); render(); restoreScroll(e.state?.scroll||0);
     return;
