@@ -81,8 +81,11 @@ const areaOf = (s: Pick<Session, "kind">): Area => (s.kind === "challenge" ? "ch
 async function sessionView(req: Request, user: DbUser, s: Session) {
   const access = await accessFor(req, user);
   const ids = s.questionIds;
-  const secs = ids.length ? await db.select({ id: questions.id, section: questions.section, scope: questions.scope }).from(questions).where(inArray(questions.id, ids)) : [];
+  const secs = ids.length ? await db.select({ id: questions.id, section: questions.section, scope: questions.scope, difficulty: questions.difficulty }).from(questions).where(inArray(questions.id, ids)) : [];
   const secOf = new Map(secs.map((r) => [r.id, r.section]));
+  // Stored difficulty (1–5) for the navigator's difficulty marks — the same
+  // metadata the question payload already carries; never the answer key.
+  const diffOf = new Map(secs.map((r) => [r.id, r.difficulty]));
   const area = areaOf(s);
   const answers = s.answers as Record<string, AnswerEntry>;
   const items = ids.map((id) => {
@@ -91,12 +94,12 @@ async function sessionView(req: Request, user: DbUser, s: Session) {
     const locked = !section || !allows(access.rules, section, area);
     // Compact: only the fields that are set (sessions can hold hundreds of items).
     const item: Record<string, unknown> = { id };
-    if (section && !locked) item.section = section;
+    if (section && !locked) { item.section = section; const d = diffOf.get(id); if (d != null) item.difficulty = d; }
     if (locked) item.locked = true;
     if (a.selected != null && a.selected !== "") item.selected = a.selected;
     if (a.submitted) { item.submitted = true; item.correct = !!a.correct; }
     if ((s.flagged || []).includes(id)) item.flagged = true;
-    return item as { id: number; section?: string; locked?: boolean; selected?: string; submitted?: boolean; correct?: boolean; flagged?: boolean };
+    return item as { id: number; section?: string; difficulty?: number; locked?: boolean; selected?: string; submitted?: boolean; correct?: boolean; flagged?: boolean };
   });
   const answered = items.filter((i) => i.submitted).length;
   return {

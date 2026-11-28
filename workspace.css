@@ -9,8 +9,15 @@ body.qw-wide .content{max-width:none}
    which each pane scrolls on its own to its very last line — passage on the
    left, prompt, every answer choice and the full explanation on the right.
    --qw-h sets the height per surface. */
-.bb.bb-inline .bb-work.split{grid-template-rows:minmax(0,1fr);height:var(--qw-h,min(72vh,760px));min-height:340px;max-height:none}
-.bb.bb-inline .bb-work.split>.bb-pane{min-height:0;max-height:none;overflow:auto;overscroll-behavior:contain;padding-bottom:3rem}
+.bb.bb-inline .bb-work.split{grid-template-rows:minmax(0,1fr);height:var(--qw-h,min(72vh,760px));min-height:340px;max-height:none;
+  /* features.css sets align-items:start for these grids; that let each pane
+     grow to its content height, so neither pane ever scrolled and long
+     passages / explanations spilled out of the box. Panes must fill the row. */
+  align-items:stretch;overflow:hidden}
+.bb.bb-inline .bb-work.split>.bb-pane{min-height:0;min-width:0;height:auto;max-height:none;overflow-x:auto;overflow-y:auto;overscroll-behavior:contain;padding-bottom:3rem;scrollbar-gutter:stable}
+/* The Full Mock runner: one fixed row so each pane scrolls on its own. */
+.bb:not(.bb-inline)>.bb-work.split{grid-template-rows:minmax(0,1fr)}
+.bb-work.split>.bb-pane{min-width:0;min-height:0}
 .pq-work{--qw-h:max(380px,calc(100dvh - 290px))}
 .rush-work{--qw-h:max(340px,calc(100dvh - 380px))}
 /* Previews inside a dialog keep the split and its independent scrolling; the
@@ -47,10 +54,9 @@ body.df-dock-practice .bb.bb-inline .bb-work.single{max-height:var(--qw-h);overf
 .qw-review-wrap{margin-top:.8rem}
 .qw-review .bb-work.single{max-height:none;overflow:visible}
 .feedback-tag.pend{color:var(--gold)}
-.rush-work .bb-work.split .bb-pane{max-height:calc(100vh - 320px)}
 /* Phones: one readable stacked flow, no nested scroll boxes. */
 @media(max-width:760px){
-  .bb.bb-inline .bb-work.split,.ft-modal-body .bb.bb-inline .bb-work.split{height:auto;min-height:0;max-height:none;display:flex;flex-direction:column}
+  .bb.bb-inline .bb-work.split,.ft-modal-body .bb.bb-inline .bb-work.split{height:auto;min-height:0;max-height:none;display:flex;flex-direction:column;overflow:visible}
   .bb.bb-inline .bb-work.split>.bb-pane,.ft-modal-body .bb.bb-inline .bb-work.split .bb-pane{overflow:visible;padding-bottom:1.2rem}
   .bb.bb-inline .bb-work.split .bb-divider{display:none}
   .pq-work .bb-work.split{min-height:0}

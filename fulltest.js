@@ -902,17 +902,20 @@ function ftWorkspaceHTML(q,ctx){
       // selected for highlighting; ftChoiceClick ignores clicks that end a selection.
       return `<div class="bb-opt ${sel?"sel":""} ${struck?"struck":""} ${ok?"key":""}" data-l="${l}">
         <div class="bb-opt-main" ${ctx.preview?"":`role="radio" tabindex="0" aria-checked="${sel}" aria-label="Answer ${l}" onpointerdown="FT_hlDown(event)" onclick="ftChoiceClick(event,'${l}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();pickTestChoice('${l}')}"`}>
-          <span class="bb-ltr">${l}</span><span class="bb-otext" ${ctx.preview?"":`data-hl="choice:${l}"`}>${mathText(q.choices[l])}${questionMediaHTML(q.choiceImages?.[l],`Answer choice ${l}`,"choice")}</span></div>
+          <span class="bb-ltr">${l}</span><span class="bb-otext" data-hl="choice:${l}">${mathText(q.choices[l])}${questionMediaHTML(q.choiceImages?.[l],`Answer choice ${l}`,"choice")}</span></div>
         ${abc?`<button type="button" class="bb-strike" onclick="FT_strike('${l}')" title="${struck?"Undo":"Cross out"} ${l}">${struck?"Undo":`<s>${l}</s>`}</button>`:""}
       </div>`;
     }).join("")}</div>`;
   }
-  const hl=ctx.preview?"":' data-hl="prompt"';
+  const hl=' data-hl="prompt"';
+  // Previews and post-test reviews get the shared in-memory highlighter
+  // (qtools.js); the live runner keeps its server-saved one.
+  const qa=ctx.preview?` data-qa="mem:ftprev" data-qid="${esc(q.id??"")}"`:"";
   const prompt=`<div class="bb-prompt"${hl}>${mathText(q.prompt)}</div>`;
-  const passage=q.passage?`<div class="bb-passage"${ctx.preview?"":' data-hl="passage"'}>${mathText(q.passage)}</div>`:"";
+  const passage=q.passage?`<div class="bb-passage" data-hl="passage">${mathText(q.passage)}</div>`:"";
   const split=(sec==="ebrw"&&(q.passage||q.questionImage))||(sec==="math"&&(q.passage||q.type==="spr"));
   if(!split){
-    return `<main class="bb-work single"><section class="bb-center">${head}${media}${prompt}${answer}</section></main>`;
+    return `<main class="bb-work single"${qa}><section class="bb-center">${head}${media}${prompt}${answer}</section></main>`;
   }
   const left=sec==="math"&&q.type==="spr"&&!q.passage
     ? `<div class="bb-spr-dir"><h4>Student-produced response directions</h4><ul>
@@ -923,7 +926,7 @@ function ftWorkspaceHTML(q,ctx){
         <li>If your answer is a mixed number (such as 3½), enter it as an improper fraction (7/2) or its decimal equivalent (3.5).</li>
         <li>Don't enter symbols such as a percent sign, comma, or dollar sign.</li></ul></div>${media}`
     : `${media}${passage}`;
-  return `<main class="bb-work split" id="bbWork" style="--split:${BB.split}%">
+  return `<main class="bb-work split" id="bbWork"${qa} style="--split:${BB.split}%">
     <section class="bb-pane bb-left">${left}</section>
     <div class="bb-divider" role="separator" aria-orientation="vertical" title="Drag to resize" ${ctx.preview?"":`onpointerdown="FT_dragStart(event)"`}><span></span></div>
     <section class="bb-pane bb-right">${head}${prompt}${answer}</section></main>`;
@@ -941,7 +944,7 @@ function renderTestQuestion(){
   if(mod.section!=="math"&&desmosFloatEl&&DF.open) desmosHide();
   // A new module (or a new sitting) starts on its first question, not on the review page.
   const modKey=`${T.id}:${T.modIdx}`;
-  if(BB.modKey!==modKey){ BB.modKey=modKey; BB.review=false; BB.nav=false; BB.abc=false; }
+  if(BB.modKey!==modKey){ BB.modKey=modKey; BB.review=false; BB.nav=false; BB.abc=false; BB.navF=null; }
   const total=mod.questions.length;
   const lastMod=T.modIdx+1>=T.test.modules.length;
   if(!total){
@@ -1027,12 +1030,34 @@ function ftRenderNavPop(){
   // Narrow screen showing the calculator: bring the question view back so the
   // question map isn't hidden behind it.
   if(document.body.classList.contains("df-dock-calc")&&typeof dfSetPane==="function") dfSetPane("question");
-  const el=document.createElement("div"); el.id="bbPop"; el.className="bb-pop";
+  const el=document.createElement("div"); el.id="bbPop"; el.className="bb-pop qn-pop";
+  el.setAttribute("role","dialog"); el.setAttribute("aria-label","Question navigator");
+  const cells=ftNavCells(mod), f=ftNavF();
   el.innerHTML=`<div class="bb-pop-head"><b>Section ${ftSectionNo(mod)}, Module ${ftModuleNo(mod)}: ${esc(FT_SECTION_LABEL[mod.section]||mod.section)} Questions</b>
     <button type="button" class="btn btn-ghost btn-xs" onclick="FT_toggleNav()" aria-label="Close">${svg("x","ic-sm")}</button></div>
-    ${ftNavGridHTML(mod)}
+    ${typeof qnSummaryHTML==="function"?`<div class="qn-head">${qnSummaryHTML(cells,FT_NAV_OPTS)}${qnFiltersHTML(cells,f,FT_NAV_OPTS,"FT_nav")}${qnQuickHTML(cells,FT_NAV_OPTS,"FT_nav")}</div>
+    <div class="bb-grid qn-grid" id="ftGrid">${qnGridHTML(cells,f,FT_NAV_OPTS,"FT_jump")}</div>${qnLegendHTML(FT_NAV_OPTS)}`:ftNavGridHTML(mod)}
     <div style="text-align:center;margin-top:.9rem"><button type="button" class="bb-btn outline" onclick="FT_openReview()">Go to Review Page</button></div>`;
   document.getElementById("bb")?.appendChild(el);
+  const cur=el.querySelector("#ftGrid .bb-cell.cur");
+  const grid=el.querySelector("#ftGrid");
+  if(grid&&cur) grid.scrollTop=Math.max(0,cur.offsetTop-grid.offsetTop-grid.clientHeight/2);
+}
+// During a sitting the map shows only what the test allows: answered,
+// unanswered, marked for review and the current question — never correctness
+// or difficulty — and it only reaches the current module.
+const FT_NAV_OPTS={correctness:false,showDiff:false};
+function ftNavF(){ return BB.navF||(BB.navF={st:"all",df:"all"}); }
+function ftNavCells(mod){ return mod.questions.map((x,i)=>({i,status:T.answers[String(x.id)]?"answered":"unanswered",diff:null,flagged:T.flagged.has(x.id),cur:!BB.review&&i===T.qIdx})); }
+function FT_nav(k,v){
+  const mod=currentTestModule(); if(!mod) return;
+  const f=ftNavF();
+  if(k==="reset"){ f.st="all"; f.df="all"; }
+  else if(k==="st"){ f.st=v; }
+  else if(k==="jump"){ const n=Math.floor(Number(v)); if(n>=1&&n<=mod.questions.length) FT_jump(n-1); else toast(`Enter a number from 1 to ${mod.questions.length}.`); return; }
+  else if(k==="next"){ if(v==="incorrect") return; const i=qnNext(ftNavCells(mod),BB.review?-1:T.qIdx,v); if(i<0) toast(QN_NONE[v]||"Nothing found."); else FT_jump(i); return; }
+  ftRenderNavPop();
+  document.querySelector("#bbPop .qn-filters select")?.focus({preventScroll:true});
 }
 function FT_toggleNav(){ BB.nav=!BB.nav; ftRenderNavPop(); document.querySelector(".bb-qpill")?.setAttribute("aria-expanded",String(BB.nav)); }
 function FT_jump(i){ BB.nav=false; BB.review=false; document.getElementById("bbPop")?.remove(); gotoTestQuestion(i,true); }
@@ -1390,7 +1415,7 @@ function renderTestResult(){
       <div class="panel"><h2>${svg("layers","ic-sm")} Modules</h2>${mods}</div>
       <div class="panel"><h2>${svg("target","ic-sm")} Knowledge and skills</h2>${r?.domains?.length?ftDomainBarsHTML(r.domains,true):`<p class="umeta">No domain data.</p>`}</div>
     </div>
-    <div class="panel"><div class="fr-rev-head"><h2>${svg("book","ic-sm")} Question-by-question review</h2>
+    <div class="panel"><div class="fr-rev-head"><h2>${svg("book","ic-sm")} Question-by-question review</h2>${typeof qtFocusBtnHTML==="function"?qtFocusBtnHTML():""}
       <div class="vb-seg">${[["all","All"],["missed","Missed"],["correct","Correct"]].map(([k,l])=>`<button class="${FR.filter===k?"on":""}" onclick="FR_filter('${k}')">${l}</button>`).join("")}</div></div>
       <p class="umeta">Select any question to see your answer, the correct answer and the explanation.</p>
       <div id="frGrids">${frGridsHTML(isOk)}</div>
@@ -1408,7 +1433,8 @@ function frGridsHTML(isOk){
   return t.modules.map((m,mi)=>`<div class="fr-gmod"><div class="fr-gtitle">${esc(m.title)}</div><div class="fr-cells">${m.questions.map((q,qi)=>{
     const ok=isOk(q), blank=!answers[String(q.id)];
     if(FR.filter==="missed"&&ok) return ""; if(FR.filter==="correct"&&!ok) return "";
-    return `<button type="button" class="fr-cell ${ok?"ok":blank?"blank":"no"} ${FR.open===mi+":"+qi?"cur":""}" onclick="FR_open(${mi},${qi})" title="${ok?"Correct":blank?"Omitted":"Incorrect"} · ${esc(q.category)}">${qi+1}</button>`;
+    const dt=typeof qnDiffText==="function"&&q.difficulty!=null?` · ${qnDiffText(q.difficulty)}`:"";
+    return `<button type="button" class="fr-cell ${ok?"ok":blank?"blank":"no"} ${FR.open===mi+":"+qi?"cur":""}" onclick="FR_open(${mi},${qi})" title="${ok?"Correct":blank?"Omitted":"Incorrect"} · ${esc(q.category)}${dt}">${qi+1}${dt?`<i class="qn-diff d-${qnBand(q.difficulty)}" aria-hidden="true"></i>`:""}</button>`;
   }).join("")||`<span class="umeta">Nothing to show.</span>`}</div></div>`).join("");
 }
 function FR_filter(k){ FR.filter=k; document.querySelectorAll(".fr-rev-head .vb-seg button").forEach((b,i)=>b.classList.toggle("on",["all","missed","correct"][i]===k)); document.getElementById("frGrids").innerHTML=frGridsHTML(FR.isOk); }

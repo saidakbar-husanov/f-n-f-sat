@@ -406,7 +406,7 @@ function viewLocalPractice(){
     P={...saved.P,cache:new Map(list.map(q=>[q.id,q])),server:false};
   } else {
     P={server:false,sid:null,kind:"local",label:state.practiceLabel,mode:state.practiceMode||"review",returnView:state.practiceReturn||"review",calcSid:newPracticeSid(),
-      items:list.map(q=>({id:q.id,section:q.section,locked:false,selected:null,submitted:false,correct:null,flagged:false})),idx:0,cache:new Map(list.map(q=>[q.id,q])),results:{}};
+      items:list.map(q=>({id:q.id,section:q.section,difficulty:q.difficulty,locked:false,selected:null,submitted:false,correct:null,flagged:false})),idx:0,cache:new Map(list.map(q=>[q.id,q])),results:{}};
   }
   if(!P.items.length){ $c().innerHTML=`<div class="empty fade"><p>No questions in this set.</p><button class="btn btn-ghost" onclick="go('${P.returnView}')">Back</button></div>`; return; }
   renderQuestion();
@@ -457,6 +457,7 @@ function renderQuestion(){
   const work=qwWorkspaceHTML(q,{
     num:P.idx+1, section:q.section, mode:"answer", given:it.selected??"", result,
     flagged:!!it.flagged, onFlag:"PQ_flag()", onPick:"pickChoice", onSpr:"PQ_sprInput", onSprEnter:"checkAnswer()",
+    anno:pqAnnoCtx(), onClear:"PQ_clearPick",
     meta:`${esc(q.category)}${q.subcategory?` · ${esc(q.subcategory)}`:""} · ${dl}`, headExtra:tools,
   });
   $c().innerHTML=practiceFrameHTML(`<div class="bb bb-inline pq-work" data-qid="${q.id}">${work}
@@ -483,7 +484,7 @@ function practiceFrameHTML(inner){
   const total=P.items.length, done=P.items.filter(i=>i.submitted||i.result||(P.results&&P.results[i.id])).length;
   const pct=Math.round(done/total*100), last=P.idx+1>=total;
   return `<div class="q-shell fade pq">
-    <div class="q-topline"><b class="pq-label">${esc(P.label)}</b><span style="flex:1"></span>${P.server?`<span class="pq-save" id="pqSave" role="status" aria-live="polite">${pqSaveText()}</span>`:""}</div>
+    <div class="q-topline"><b class="pq-label">${esc(P.label)}</b><span style="flex:1"></span>${typeof qtFocusBtnHTML==="function"?qtFocusBtnHTML():""}${P.server?`<span class="pq-save" id="pqSave" role="status" aria-live="polite">${pqSaveText()}</span>`:""}</div>
     <div class="q-progress" title="${done} of ${total} answered"><i style="width:${pct}%"></i></div>
     ${inner}
     <nav class="pq-bar" aria-label="Question navigation">
@@ -502,18 +503,38 @@ function practiceFrameHTML(inner){
 // scrolling.
 const pqAnswered=x=>!!(x.submitted||x.result||(P.results&&P.results[x.id]));
 const pqIsSheet=()=>window.matchMedia("(max-width:760px)").matches;
-function pqCellHTML(x,i){
-  const ans=pqAnswered(x), cur=i===P.idx, sel=!ans&&x.selected!=null&&x.selected!=="";
-  return `<button type="button" class="bb-cell ${ans?"ans":""} ${x.flagged?"flag":""} ${cur?"cur":""} ${x.locked?"locked":""} ${sel?"picked":""}" data-i="${i}" tabindex="${cur?0:-1}" onclick="PQ_jump(${i})" aria-label="Question ${i+1}${ans?", answered":sel?", answer chosen, not checked":", unanswered"}${x.flagged?", marked for review":""}${x.locked?", not available":""}${cur?", current":""}" ${cur?'aria-current="true"':""}>${cur?`<i class="bb-pin" aria-hidden="true"></i>`:""}${i+1}${x.flagged?`<span class="bb-flagdot" aria-hidden="true">${typeof ftIcon==="function"?ftIcon("bookmark"):""}</span>`:""}</button>`;
+// Answer status from the session's own data. Correctness is shown only for
+// answers already checked — practice reveals it at that moment anyway.
+function pqStatus(x){
+  if(x.locked) return "locked";
+  const r=x.result||(P.results&&P.results[x.id]);
+  if(x.submitted||r) return (r?r.correct:x.correct)?"correct":"incorrect";
+  return x.selected!=null&&x.selected!==""?"pending":"unanswered";
 }
+function pqDiff(x){ return x.difficulty??P.cache.get(x.id)?.difficulty??null; }
+const PQ_NAV_OPTS={correctness:true,showDiff:true};
+function pqCells(){ return P.items.map((x,i)=>({i,status:pqStatus(x),diff:x.locked?null:pqDiff(x),flagged:!!x.flagged,cur:i===P.idx})); }
+function pqNavF(){ return P.navF||(P.navF={st:"all",df:"all"}); }
 function pqPopHTML(){
-  const answered=P.items.filter(pqAnswered).length;
+  const cells=pqCells(), f=pqNavF();
   return `<div class="pq-scrim" onclick="PQ_closeNav(true)"></div>
-  <div class="pq-pop" id="pqPop" role="dialog" aria-modal="true" aria-labelledby="pqPopTitle">
-    <div class="pq-pop-head"><div class="pq-pop-title"><b id="pqPopTitle">${esc(P.label)}</b><span class="umeta" id="pqPopCount">${answered} of ${P.items.length} answered</span></div>
-      <button type="button" class="btn btn-ghost btn-xs" onclick="PQ_closeNav(true)" aria-label="Close question picker">${svg("x","ic-sm")}</button></div>
-    <div class="pq-pop-grid" id="pqGrid" role="group" aria-label="Questions">${P.items.map(pqCellHTML).join("")}</div>
-    <div class="bb-legend pq-legend"><span><i class="lg cur"></i>Current</span><span><i class="lg un"></i>Unanswered</span><span><i class="lg ans"></i>Answered</span><span><i class="lg flag"></i>For Review</span></div></div>`;
+  <div class="pq-pop qn-pop" id="pqPop" role="dialog" aria-modal="true" aria-labelledby="pqPopTitle">
+    <div class="pq-pop-head"><div class="pq-pop-title"><b id="pqPopTitle">${esc(P.label)}</b><span class="umeta" id="pqPopCount">Question ${P.idx+1} of ${P.items.length}</span></div>
+      <button type="button" class="btn btn-ghost btn-xs" onclick="PQ_closeNav(true)" aria-label="Close question navigator">${svg("x","ic-sm")}</button></div>
+    <div class="qn-head" id="qnHead">${pqNavHeadHTML(cells,f)}</div>
+    <div class="pq-pop-grid" id="pqGrid" role="group" aria-label="Questions">${qnGridHTML(cells,f,PQ_NAV_OPTS,"PQ_jump")}</div>
+    ${qnLegendHTML(PQ_NAV_OPTS)}</div>`;
+}
+function pqNavHeadHTML(cells,f){ return qnSummaryHTML(cells,PQ_NAV_OPTS)+qnFiltersHTML(cells,f,PQ_NAV_OPTS,"PQ_nav")+qnQuickHTML(cells,PQ_NAV_OPTS,"PQ_nav"); }
+// Filters, jump-to-number and "next …" — they only move within this set.
+function PQ_nav(k,v){
+  if(!P) return;
+  const f=pqNavF(), cells=pqCells();
+  if(k==="reset"){ f.st="all"; f.df="all"; }
+  else if(k==="st"||k==="df"){ f[k]=v; }
+  else if(k==="jump"){ const n=Math.floor(Number(v)); if(n>=1&&n<=P.items.length) PQ_jump(n-1); else toast(`Enter a number from 1 to ${P.items.length}.`); return; }
+  else if(k==="next"){ const i=qnNext(cells,P.idx,v); if(i<0) toast(QN_NONE[v]||"Nothing found."); else PQ_jump(i); return; }
+  PQ_refreshNav(true);
 }
 function PQ_placeNav(){
   const layer=document.getElementById("pqLayer"), pop=document.getElementById("pqPop"); if(!layer||!pop) return;
@@ -541,8 +562,8 @@ function PQ_openNav(){
   PQ_placeNav();
   document.getElementById("pqPill")?.setAttribute("aria-expanded","true");
   // Show the current question straight away and focus its number.
-  const grid=document.getElementById("pqGrid"), cur=grid?.querySelector(".bb-cell.cur");
-  if(grid&&cur){ grid.scrollTop=Math.max(0,cur.offsetTop-grid.clientHeight/2+cur.offsetHeight/2); cur.focus({preventScroll:true}); }
+  const grid=document.getElementById("pqGrid"), cur=grid?.querySelector(".bb-cell.cur")||grid?.querySelector('.bb-cell[tabindex="0"]');
+  if(grid&&cur){ grid.scrollTop=Math.max(0,cur.offsetTop-grid.offsetTop-grid.clientHeight/2+cur.offsetHeight/2); cur.focus({preventScroll:true}); }
 }
 function PQ_closeNav(restoreFocus){
   const had=!!document.getElementById("pqLayer");
@@ -553,13 +574,17 @@ function PQ_closeNav(restoreFocus){
 }
 function PQ_toggleNav(){ if(document.getElementById("pqLayer")) PQ_closeNav(true); else PQ_openNav(); }
 // Re-paint the open picker (after an answer is checked) without moving its scroll.
-function PQ_refreshNav(){
+function PQ_refreshNav(filtered){
   const grid=document.getElementById("pqGrid"); if(!grid||!P) return;
   const st=grid.scrollTop, focused=document.activeElement?.dataset?.i;
-  grid.innerHTML=P.items.map(pqCellHTML).join("");
-  grid.scrollTop=st;
-  const c=document.getElementById("pqPopCount"); if(c) c.textContent=`${P.items.filter(pqAnswered).length} of ${P.items.length} answered`;
-  if(focused!=null) grid.querySelector(`[data-i="${focused}"]`)?.focus({preventScroll:true});
+  const active=document.activeElement, sel=active?.closest?.("#qnHead")?[...document.querySelectorAll("#qnHead select")].indexOf(active):-1;
+  const cells=pqCells(), f=pqNavF();
+  grid.innerHTML=qnGridHTML(cells,f,PQ_NAV_OPTS,"PQ_jump");
+  const head=document.getElementById("qnHead"); if(head) head.innerHTML=pqNavHeadHTML(cells,f);
+  grid.scrollTop=filtered?0:st;
+  if(sel>=0) document.querySelectorAll("#qnHead select")[sel]?.focus({preventScroll:true});
+  else if(focused!=null) grid.querySelector(`[data-i="${focused}"]`)?.focus({preventScroll:true});
+  if(filtered&&!grid.querySelector(".bb-cell")) document.querySelector("#qnHead button[onclick*=reset]")?.focus({preventScroll:true});
 }
 function PQ_jump(i){ PQ_closeNav(false); PQ_go(i); setTimeout(()=>document.getElementById("pqPill")?.focus({preventScroll:true}),0); }
 function PQ_go(i){
@@ -590,7 +615,7 @@ document.addEventListener("keydown",e=>{
     }
     if(e.key==="Tab"){
       const pop=document.getElementById("pqPop");
-      const f=[pop.querySelector(".pq-pop-head button"),pop.querySelector('#pqGrid .bb-cell[tabindex="0"]')].filter(Boolean);
+      const f=[...pop.querySelectorAll("button,select,input")].filter(el=>!el.disabled&&el.offsetParent!==null&&(!el.closest("#pqGrid")||el.tabIndex===0));
       if(f.length){ const at=f.indexOf(document.activeElement); e.preventDefault(); f[(at+(e.shiftKey?f.length-1:1))%f.length].focus(); }
       return;
     }
@@ -622,6 +647,7 @@ function PQ_flag(){
   it.flagged=!it.flagged;
   const b=document.getElementById("pqFlag"); if(b){ b.classList.toggle("on",it.flagged); b.setAttribute("aria-pressed",String(it.flagged)); b.querySelector("span").textContent=it.flagged?"Marked for review":"Mark for review"; }
   if(P.server) PQ_queue({flag:{questionId:it.id,on:it.flagged}}); else savePracticeProgress();
+  PQ_refreshNav();
 }
 
 // ── save queue: merged, ordered, retried, mirrored to this device ──
@@ -765,8 +791,27 @@ function finishPractice(fromStatus){
     <div style="display:flex;gap:.7rem;justify-content:center;flex-wrap:wrap">
       <button class="btn btn-primary" onclick="go('${P.returnView}')">${svg("back","ic-sm")} Return to ${practiceReturnLabel(P.returnView)}</button>
       ${P.server&&P.kind==="bank"?`<button class="btn btn-ghost" onclick="QB_startWith(${plJs({...(P.filters||{}),shuffle:!!P.filters?.shuffle})},{remember:false})">${svg("rush","ic-sm")} Practise these again</button>`:""}
+      ${graded.length-c>0?`<button class="btn btn-ghost" onclick="PQ_reviewIncorrect()">${svg("back","ic-sm")} Review ${graded.length-c} incorrect question${graded.length-c===1?"":"s"}</button>`:""}
       <button class="btn btn-ghost" onclick="go('profile')">${svg("profile","ic-sm")} View progress</button>
     </div></div></div>`;
+}
+
+// Mistake-based practice: the incorrectly answered questions of this set as a
+// fresh review set (the existing "review" flow). The original session, its
+// answers and scores stay as they were; the retry is recorded separately
+// under the existing review mode and its rules.
+async function PQ_reviewIncorrect(){
+  if(!P) return;
+  const wrong=P.items.filter(i=>pqStatus(i)==="incorrect");
+  if(!wrong.length){ toast("No incorrect answers in this set."); return; }
+  const missing=wrong.map(i=>i.id).filter(id=>!P.cache.has(id));
+  try{ for(let k=0;k<missing.length;k+=6) await ensureQuestions(missing.slice(k,k+6)); }
+  catch(e){ toast(e.message||"Could not load the questions."); return; }
+  const list=wrong.map(i=>P.cache.get(i.id)).filter(Boolean).map(q=>{ const {result,...rest}=q; return rest; });
+  if(!list.length){ toast("These questions are no longer available."); return; }
+  const back=P.returnView;
+  clearActiveQuiz();
+  go("practice",{practiceSet:list,practiceLabel:`Incorrect · ${P.label}`,practiceMode:"review",practiceReturn:back,sid:null,q:null});
 }
 
 // Records and grades one answer on the server (tasks, review, rush).

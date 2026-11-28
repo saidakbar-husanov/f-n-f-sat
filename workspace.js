@@ -27,7 +27,7 @@ function qwSetSplit(v,persist=true){
   if(persist) try{ localStorage.setItem("fnf_split",String(v)); }catch{}
 }
 function qwDividerHTML(){
-  return `<div class="bb-divider" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize the passage and question panes" aria-valuemin="25" aria-valuemax="75" aria-valuenow="${Math.round(QW.split)}" aria-valuetext="Left pane ${Math.round(QW.split)} percent" title="Drag, or use the arrow keys, to resize" onpointerdown="QW_dragStart(event)" onkeydown="QW_dividerKey(event)"><span></span></div>`;
+  return `<div class="bb-divider" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize the passage and question panes" aria-valuemin="25" aria-valuemax="75" aria-valuenow="${Math.round(QW.split)}" aria-valuetext="Left pane ${Math.round(QW.split)} percent" title="Drag, or use the arrow keys, to resize · double-click to reset" onpointerdown="QW_dragStart(event)" ondblclick="qwSetSplit(50)" onkeydown="QW_dividerKey(event)"><span></span></div>`;
 }
 // Mouse and touch: pointer events with capture, so the drag keeps tracking
 // even when the pointer crosses an iframe (Desmos) or leaves the divider.
@@ -35,6 +35,7 @@ function QW_dragStart(e){
   const div=e.currentTarget||e.target.closest(".bb-divider"), work=div?.closest(".bb-work.split"); if(!work) return;
   if(e.button!==undefined&&e.button!==0&&e.pointerType==="mouse") return;
   e.preventDefault();
+  try{ window.getSelection()?.removeAllRanges(); }catch{}
   try{ div.setPointerCapture(e.pointerId); }catch{}
   div.focus({preventScroll:true});
   const move=ev=>{ const r=work.getBoundingClientRect(); if(r.width>0) qwSetSplit(((ev.clientX-r.left)/r.width)*100,false); };
@@ -88,11 +89,16 @@ function qwWorkspaceHTML(q,ctx={}){
   const locked=review||!!res;
   const given=String(res?.selected??ctx.given??"");
   const key=res?.answer??(ctx.showKey?q.answer:undefined);
+  // Personal annotations (highlights, eliminated choices) live outside the
+  // question, keyed by this workspace's context (session / attempt) and the
+  // question id. See qtools.js.
+  const anno=ctx.anno||"mem:ws";
+  const elim=typeof qaGet==="function"?qaGet(anno,q.id).el:[];
   const head=`<div class="bb-qhead">
     <span class="bb-qnum">${esc(ctx.num??"")}</span>
     ${ctx.onFlag?`<button type="button" class="bb-mark ${ctx.flagged?"on":""}" id="pqFlag" aria-pressed="${!!ctx.flagged}" onclick="${ctx.onFlag}">${ftIcon("bookmark")} <span>${ctx.flagged?"Marked for Review":"Mark for Review"}</span></button>`:""}
     ${ctx.meta?`<span class="bb-qmeta">${ctx.meta}</span>`:""}
-    <span style="flex:1"></span>${ctx.headExtra||""}</div>`;
+    <span style="flex:1"></span>${typeof qaToolsHTML==="function"?qaToolsHTML(q,anno,locked):""}${ctx.headExtra||""}</div>`;
   const media=q.questionImage?`<div class="bb-figure">${questionMediaHTML(q.questionImage,"Figure for this question")}</div>`:"";
   let answer;
   if(q.type==="spr"){
@@ -105,22 +111,24 @@ function qwWorkspaceHTML(q,ctx={}){
       ${key!=null&&(review||res)?`<div class="qw-key">Correct answer: <b>${mathText(key)}</b>${(res?.acceptableAnswers||q.acceptableAnswers||[]).length?` <span class="umeta">(also accepted: ${(res?.acceptableAnswers||q.acceptableAnswers).map(a=>esc(a)).join(", ")})</span>`:""}</div>`:""}</div>`;
   } else {
     answer=`<div class="bb-opts" role="radiogroup" aria-label="Answer choices">${["A","B","C","D"].filter(l=>q.choices&&q.choices[l]!=null).map(l=>{
-      const sel=given===l, isKey=key!=null&&key===l, wrong=sel&&key!=null&&key!==l;
-      const cls=[locked?"":sel?"sel":"", isKey?"key":"", wrong?"wrong":"", locked&&sel?"given":""].join(" ");
+      const sel=given===l, isKey=key!=null&&key===l, wrong=sel&&key!=null&&key!==l, struck=elim.includes(l);
+      const cls=[locked?"":sel?"sel":"", isKey?"key":"", wrong?"wrong":"", locked&&sel?"given":"", struck?(locked?"struck qa-was":"struck"):""].join(" ");
       return `<div class="bb-opt ${cls}" data-l="${l}">
-        <div class="bb-opt-main" role="radio" ${locked?`aria-disabled="true" tabindex="-1"`:`tabindex="${sel||(!given&&l==="A")?0:-1}" onclick="${ctx.onPick}('${l}')" onkeydown="QW_choiceKey(event,'${l}','${ctx.onPick}')"`} aria-checked="${sel}" aria-label="Answer ${l}${isKey?", correct answer":""}${wrong?", your answer, incorrect":locked&&sel?", your answer":""}">
-          <span class="bb-ltr">${l}</span><span class="bb-otext">${mathText(q.choices[l])}${questionMediaHTML(q.choiceImages?.[l],`Answer choice ${l}`,"choice")}</span>
-          ${locked&&sel?`<span class="qw-tag ${wrong?"no":"ok"}">${review?"Submitted":"Your answer"}</span>`:""}${isKey&&!sel?`<span class="qw-tag ok">Correct</span>`:""}</div></div>`;
+        <div class="bb-opt-main" role="radio" ${locked?`aria-disabled="true" tabindex="-1"`:`tabindex="${sel||(!given&&l==="A")?0:-1}" onpointerdown="QA_down(event)" onclick="QA_pick(event,'${l}','${ctx.onPick}')" onkeydown="QW_choiceKey(event,'${l}','${ctx.onPick}')"`} aria-checked="${sel}" aria-label="Answer ${l}${isKey?", correct answer":""}${wrong?", your answer, incorrect":locked&&sel?", your answer":""}${struck?", eliminated":""}">
+          <span class="bb-ltr">${l}</span><span class="bb-otext" data-hl="choice:${l}">${mathText(q.choices[l])}${questionMediaHTML(q.choiceImages?.[l],`Answer choice ${l}`,"choice")}</span>
+          ${locked&&sel?`<span class="qw-tag ${wrong?"no":"ok"}">${review?"Submitted":"Your answer"}</span>`:""}${isKey&&!sel?`<span class="qw-tag ok">Correct</span>`:""}${locked&&struck?`<span class="qw-tag qa-was-tag">Eliminated</span>`:""}</div>
+        ${locked?"":`<button type="button" class="bb-strike qa-strike" onclick="QA_elim(event,'${l}')" aria-pressed="${struck}" aria-label="${struck?"Restore":"Eliminate"} answer ${l}" title="${struck?"Restore":"Eliminate"} answer ${l}">${struck?"Undo":`<s>${l}</s>`}</button>`}</div>`;
     }).join("")}</div>`;
   }
   const expl=res?.explanation??(ctx.showKey?q.explanation:undefined);
   const feedback=(res||review)?qwFeedbackHTML(q,{correct:res?res.correct:(given?qwSameAnswer(q,given,key):null),answer:key,explanation:expl,given,review}):"";
-  const prompt=`<div class="bb-prompt">${mathText(q.prompt)}</div>`;
-  const passage=q.passage?`<div class="bb-passage">${mathText(q.passage)}</div>`:"";
+  const prompt=`<div class="bb-prompt" data-hl="prompt">${mathText(q.prompt)}</div>`;
+  const passage=q.passage?`<div class="bb-passage" data-hl="passage">${mathText(q.passage)}</div>`:"";
+  const qa=`data-qa="${esc(anno)}" data-qid="${esc(q.id??"")}" data-qa-clear="${esc(ctx.onClear||"")}"`;
   const right=`${head}${qwIsSplit(q,sec)?"":media}${prompt}${answer}<div id="${ctx.feedbackId||"explainArea"}" class="qw-feedback">${feedback}</div>`;
-  if(!qwIsSplit(q,sec)) return `<main class="bb-work single"><section class="bb-center">${right}</section></main>`;
+  if(!qwIsSplit(q,sec)) return `<main class="bb-work single" ${qa}><section class="bb-center">${right}</section></main>`;
   const left=sec==="math"&&q.type==="spr"&&!q.passage?`${QW_SPR_DIRECTIONS}${media}`:`${media}${passage}`;
-  return `<main class="bb-work split" style="--split:${QW.split}%">
+  return `<main class="bb-work split" ${qa} style="--split:${QW.split}%">
     <section class="bb-pane bb-left" aria-label="Source material">${left}</section>${qwDividerHTML()}
     <section class="bb-pane bb-right" aria-label="Question">${right}</section></main>`;
 }
@@ -140,7 +148,7 @@ function QW_sprPreview(id,v){ const el=document.getElementById(id+"Prev"); if(el
 function QW_choiceKey(e,l,fn){
   const opts=[...e.currentTarget.closest(".bb-opts").querySelectorAll(".bb-opt-main[role=radio]:not([aria-disabled=true])")];
   const i=opts.indexOf(e.currentTarget);
-  if(e.key==="Enter"||e.key===" "){ e.preventDefault(); window[fn]?.(l); return; }
+  if(e.key==="Enter"||e.key===" "){ e.preventDefault(); if(typeof QA_unElim==="function") QA_unElim(e.currentTarget,l); window[fn]?.(l); return; }
   const d={ArrowDown:1,ArrowRight:1,ArrowUp:-1,ArrowLeft:-1}[e.key];
   if(d&&!e.altKey){ e.preventDefault(); const n=opts[(i+d+opts.length)%opts.length]; opts.forEach(o=>o.tabIndex=-1); n.tabIndex=0; n.focus(); }
 }
